@@ -67,4 +67,20 @@ final class SpeakerAccentTests: XCTestCase {
             SpeakerAccent.hashedColor(for: "kirill"),
         )
     }
+
+    func testUnknownKeyUsesHashedColorInsteadOfFirstSpeaker() {
+        var palette = SpeakerAccent.Palette()
+        palette.register(SpeakerAccent.youKey)
+        palette.register("alex")
+        XCTAssertEqual(palette.othersIndex(for: "alex"), 0)
+        XCTAssertNil(palette.othersIndex(for: "unknown"))
+        XCTAssertNotEqual(
+            palette.color(forKey: "unknown", isYou: false),
+            palette.color(forKey: "alex", isYou: false),
+        )
+        XCTAssertEqual(
+            palette.color(forKey: "unknown", isYou: false),
+            SpeakerAccent.hashedColor(for: "unknown"),
+        )
+    }
 }

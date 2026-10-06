@@ -214,6 +214,28 @@ final class MeetingNotesViewTests: XCTestCase {
         XCTAssertThrowsError(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesGenerating))
     }
 
+    func testRecordOnlyFinishDoesNotShowGeneratingPlaceholder() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Planning", appName: "Meet")
+        session.applyFinalized("hello", channel: .mic, speaker: "Me")
+        session.finishRecording(recordOnly: true)
+        session.sync(from: PipelineQueue())
+
+        let settings = makeSettings()
+        settings.recordOnly = true
+        let view = MeetingNotesView(
+            session: session,
+            settings: settings,
+            queue: PipelineQueue(),
+            liveTranscriptionEnabled: true,
+            initialTab: .summary,
+        )
+        let body = try view.inspect()
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertThrowsError(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesGenerating))
+        XCTAssertNoThrow(try body.find(text: "Record-only is on — notes are not generated."))
+    }
+
     private func makeSettings() -> AppSettings {
         let suite = "MeetingNotesViewTests-\(getpid())-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard

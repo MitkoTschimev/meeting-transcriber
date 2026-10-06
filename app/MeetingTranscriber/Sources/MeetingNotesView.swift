@@ -83,7 +83,10 @@ struct MeetingNotesView: View {
         }
         .frame(minWidth: 640, minHeight: 520)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { session.sync(from: queue) }
+        .onAppear {
+            session.setMicLabel(micLabel)
+            session.sync(from: queue)
+        }
         .onChange(of: jobSignature) { _, _ in
             session.sync(from: queue)
         }

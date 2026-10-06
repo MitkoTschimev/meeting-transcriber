@@ -38,11 +38,12 @@ final class MeetingNotesSession {
     private(set) var speakerPalette = SpeakerAccent.Palette()
 
     /// Private scratchpad for the My thoughts tab. Never written into the
-    /// transcript, summary, or protocol files.
+    /// transcript, summary, or protocol files. Keystrokes debounce to disk;
+    /// finish / adopt / begin flush immediately.
     var thoughts: String = "" {
         didSet {
             guard !isLoadingThoughts, thoughts != oldValue else { return }
-            persistThoughts()
+            schedulePersistThoughts()
         }
     }
 
@@ -53,9 +54,25 @@ final class MeetingNotesSession {
     private let thoughtsStore: MeetingThoughtsStore?
     private var thoughtsURL: URL?
     private var isLoadingThoughts = false
+    private var persistTask: Task<Void, Never>?
+    private let persistDelay: Duration
+    private var micLabel: String = ""
 
-    init(thoughtsStore: MeetingThoughtsStore? = nil) {
+    /// Jobs enqueued a beat before `startedAt` still belong to this session
+    /// (clock skew between watch-loop stop and pipeline enqueue).
+    private static let enqueueMatchSlack: TimeInterval = 2
+
+    init(
+        thoughtsStore: MeetingThoughtsStore? = nil,
+        persistDelay: Duration = .milliseconds(400),
+    ) {
         self.thoughtsStore = thoughtsStore
+        self.persistDelay = persistDelay
+        thoughtsStore?.pruneInProgress()
+    }
+
+    func setMicLabel(_ label: String) {
+        micLabel = label
     }
 
     var hasSession: Bool {
@@ -126,23 +143,27 @@ final class MeetingNotesSession {
             if !appName.isEmpty { self.appName = appName }
             return
         }
-        persistThoughts()
+        persistThoughtsNow()
         resetContents()
         self.title = title
         self.appName = appName
         startedAt = startTime
         endedAt = nil
         phase = .recording
-        thoughtsURL = thoughtsStore?.inProgressURL(startedAt: startTime)
+        thoughtsURL = thoughtsStore?.inProgressURL()
+        thoughtsStore?.pruneInProgress(keeping: thoughtsURL)
         loadThoughtsFromCurrentURL()
     }
 
-    func finishRecording() {
+    func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
+        persistThoughtsNow()
         endedAt = Date()
         hypothesisMic = ""
         hypothesisApp = ""
-        phase = .processing
+        // Record-only never enqueues a pipeline job. Stay out of `.processing`
+        // so Summary does not sit on the generating placeholder forever.
+        phase = recordOnly ? .ready : .processing
     }
 
     func applyPartial(_ text: String, channel: LiveCaptionChannel) {
@@ -150,9 +171,6 @@ final class MeetingNotesSession {
         switch channel {
         case .mic: hypothesisMic = text
         case .app: hypothesisApp = text
-        }
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            registerSpeaker(channel == .mic ? "Me" : "Remote", isYou: channel == .mic)
         }
     }
 
@@ -176,12 +194,23 @@ final class MeetingNotesSession {
     }
 
     /// Pull transcript / notes / phase from the pipeline once a job exists.
-    /// While recording (or before the session has ended) this does not bind a
-    /// job — an older same-title meeting must not replace the live transcript.
-    /// After `finishRecording`, only jobs enqueued at or after `startedAt`.
+    /// While recording this does not bind a job — an older same-title meeting
+    /// must not replace the live transcript. After `finishRecording`, only jobs
+    /// enqueued at or after `startedAt` (with a small clock-skew slack). A
+    /// cold idle window may restore the newest completed job.
     func sync(from queue: PipelineQueue) {
+        if micLabel.isEmpty, !queue.micLabel.isEmpty {
+            micLabel = queue.micLabel
+        }
         if shouldDeferJobBinding { return }
-        guard let job = matchingJob(in: queue) else { return }
+        guard let job = matchingJob(in: queue) else {
+            // Record-only (or any finish that never enqueued) has no job to
+            // wait on. Leave `.processing` only while recent pipeline work exists.
+            if phase == .processing, !hasRecentPipelineWork(in: queue) {
+                phase = .ready
+            }
+            return
+        }
         jobID = job.id
         if title.isEmpty { title = job.meetingTitle }
         if appName.isEmpty { appName = job.appName }
@@ -208,9 +237,10 @@ final class MeetingNotesSession {
     }
 
     /// Recording has no pipeline job yet. Binding by title / newest job would
-    /// load another meeting's transcript and notes into this session.
+    /// load another meeting's transcript and notes into this session. Idle is
+    /// allowed to restore the newest completed job.
     private var shouldDeferJobBinding: Bool {
-        phase == .recording || (jobID == nil && endedAt == nil)
+        phase == .recording
     }
 
     private func applyPhase(from job: PipelineJob) {
@@ -239,7 +269,10 @@ final class MeetingNotesSession {
         if let jobID, let match = all.first(where: { $0.id == jobID }) {
             return match
         }
-        let started = startedAt ?? .distantPast
+        if phase == .idle {
+            return queue.completedJobs.max { $0.enqueuedAt < $1.enqueuedAt }
+        }
+        let started = (startedAt ?? .distantPast).addingTimeInterval(-Self.enqueueMatchSlack)
         let recent = all.filter { $0.enqueuedAt >= started }
         guard !recent.isEmpty else { return nil }
 
@@ -256,16 +289,29 @@ final class MeetingNotesSession {
         return recent.max { $0.enqueuedAt < $1.enqueuedAt }
     }
 
+    private func hasRecentPipelineWork(in queue: PipelineQueue) -> Bool {
+        let started = (startedAt ?? .distantPast).addingTimeInterval(-Self.enqueueMatchSlack)
+        return queue.jobs.contains { job in
+            job.enqueuedAt >= started && !job.state.isTerminal
+        }
+    }
+
     private func registerSpeaker(_ raw: String, isYou: Bool) {
-        speakerPalette.register(SpeakerAccent.identityKey(raw, micLabel: "", isYou: isYou))
+        speakerPalette.register(SpeakerAccent.identityKey(raw, micLabel: micLabel, isYou: isYou))
     }
 
     private func rememberPipelineSpeakers(_ transcript: String) {
-        let parsed = TranscriptTurn.parsePipeline(transcript, micLabel: "")
-        speakerPalette = TranscriptTurn.palette(for: parsed, micLabel: "", existing: speakerPalette)
+        let parsed = TranscriptTurn.parsePipeline(transcript, micLabel: micLabel)
+        speakerPalette = TranscriptTurn.palette(
+            for: parsed,
+            micLabel: micLabel,
+            existing: speakerPalette,
+        )
     }
 
     private func resetContents() {
+        persistTask?.cancel()
+        persistTask = nil
         isLoadingThoughts = true
         lines.removeAll()
         hypothesisMic = ""
@@ -290,28 +336,44 @@ final class MeetingNotesSession {
         isLoadingThoughts = false
     }
 
-    private func persistThoughts() {
+    private func persistThoughtsNow() {
+        persistTask?.cancel()
+        persistTask = nil
         guard let thoughtsStore, let thoughtsURL else { return }
         thoughtsStore.save(thoughts, to: thoughtsURL)
     }
 
-    private func adoptThoughtsFile(for job: PipelineJob) {
-        guard let thoughtsStore, let sibling = MeetingThoughtsStore.siblingURL(of: job) else {
-            return
+    private func schedulePersistThoughts() {
+        persistTask?.cancel()
+        guard let thoughtsStore, let thoughtsURL else { return }
+        let text = thoughts
+        let delay = persistDelay
+        persistTask = Task.detached {
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard !Task.isCancelled else { return }
+            thoughtsStore.save(text, to: thoughtsURL)
         }
-        if thoughtsURL != sibling {
-            if let previous = thoughtsURL, previous != sibling {
+    }
+
+    private func adoptThoughtsFile(for job: PipelineJob) {
+        guard let thoughtsStore else { return }
+        let jobURL = thoughtsStore.url(for: job)
+        persistThoughtsNow()
+        if thoughtsURL != jobURL {
+            if let previous = thoughtsURL, previous != jobURL {
                 thoughtsStore.remove(previous)
             }
-            thoughtsURL = sibling
+            thoughtsURL = jobURL
         }
         if thoughts.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let stored = thoughtsStore.load(from: sibling) {
+           let stored = thoughtsStore.load(from: jobURL) {
             isLoadingThoughts = true
             thoughts = stored
             isLoadingThoughts = false
         } else {
-            persistThoughts()
+            persistThoughtsNow()
         }
     }
 

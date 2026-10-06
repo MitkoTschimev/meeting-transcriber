@@ -200,8 +200,74 @@ final class MeetingNotesSessionTests: XCTestCase {
 
         XCTAssertNil(session.jobID)
         XCTAssertNil(session.pipelineTranscript)
-        XCTAssertEqual(session.phase, .processing)
+        XCTAssertEqual(session.phase, .ready)
         XCTAssertEqual(session.lines.map(\.text), ["this meeting"])
+    }
+
+    func testFinishWithNoRecentJobsEndsReady() {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "Zoom")
+        session.applyFinalized("live", channel: .mic, speaker: "Me")
+        session.finishRecording()
+        session.sync(from: PipelineQueue())
+
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertNil(session.jobID)
+        XCTAssertEqual(session.lines.map(\.text), ["live"])
+    }
+
+    func testFinishRecordOnlyEndsReadyWithoutWaitingForAJob() {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "Zoom")
+        session.applyFinalized("live", channel: .mic, speaker: "Me")
+        session.finishRecording(recordOnly: true)
+
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertNil(session.jobID)
+    }
+
+    func testIdleSyncRestoresNewestCompletedJob() throws {
+        let dir = try makeTempDirectory(prefix: "notes-idle-restore")
+        let olderURL = dir.appendingPathComponent("old.txt")
+        let newerURL = dir.appendingPathComponent("new.txt")
+        try "older meeting".write(to: olderURL, atomically: true, encoding: .utf8)
+        try "latest meeting".write(to: newerURL, atomically: true, encoding: .utf8)
+
+        var older = PipelineJob(
+            meetingTitle: "Yesterday",
+            appName: "Zoom",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date().addingTimeInterval(-3600),
+        )
+        older.state = .done
+        older.transcriptPath = olderURL
+
+        var newer = PipelineJob(
+            meetingTitle: "Today",
+            appName: "Teams",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date().addingTimeInterval(-60),
+        )
+        newer.state = .done
+        newer.transcriptPath = newerURL
+
+        let queue = PipelineQueue()
+        queue.jobs = [older, newer]
+
+        let session = MeetingNotesSession()
+        XCTAssertEqual(session.phase, .idle)
+        session.sync(from: queue)
+
+        XCTAssertEqual(session.jobID, newer.id)
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertEqual(session.transcriptText, "latest meeting")
+        XCTAssertEqual(session.title, "Today")
     }
 
     func testDoneJobWithNilProtocolPathEndsReadyAndSurfacesWarnings() {
@@ -231,13 +297,13 @@ final class MeetingNotesSessionTests: XCTestCase {
         XCTAssertNotEqual(session.phase, .failed)
     }
 
-    func testThoughtsPersistBesideJobTranscript() throws {
+    func testThoughtsPersistUnderStoreKeyedByJob() throws {
         let dir = try makeTempDirectory(prefix: "thoughts-store")
         let store = MeetingThoughtsStore(directory: dir.appendingPathComponent("scratch", isDirectory: true))
         let transcriptURL = dir.appendingPathComponent("standup.txt")
         try "transcript".write(to: transcriptURL, atomically: true, encoding: .utf8)
 
-        let session = MeetingNotesSession(thoughtsStore: store)
+        let session = MeetingNotesSession(thoughtsStore: store, persistDelay: .zero)
         let start = Date(timeIntervalSince1970: 1_700_000_100)
         session.begin(title: "Standup", appName: "Zoom", startTime: start)
         session.thoughts = "private scratch"
@@ -254,17 +320,18 @@ final class MeetingNotesSessionTests: XCTestCase {
         )
         job.state = .done
         job.transcriptPath = transcriptURL
+        job.namingSlug = "standup-job"
         let queue = PipelineQueue()
         queue.jobs = [job]
         session.sync(from: queue)
 
+        let jobURL = store.url(for: job)
+        XCTAssertEqual(try String(contentsOf: jobURL, encoding: .utf8), "private scratch")
         let sibling = transcriptURL.deletingPathExtension().appendingPathExtension("thoughts.md")
-        XCTAssertEqual(try String(contentsOf: sibling, encoding: .utf8), "private scratch")
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: store.inProgressURL(startedAt: start).path),
-        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sibling.path))
+        XCTAssertTrue(jobURL.path.hasPrefix(store.directory.path))
 
-        let reloaded = MeetingNotesSession(thoughtsStore: store)
+        let reloaded = MeetingNotesSession(thoughtsStore: store, persistDelay: .zero)
         reloaded.begin(title: "Standup", appName: "Zoom", startTime: start)
         reloaded.finishRecording()
         reloaded.sync(from: queue)
@@ -319,5 +386,46 @@ final class MeetingNotesSessionTests: XCTestCase {
         let after = session.palette(for: session.turns(micLabel: "Me"), micLabel: "Me")
         XCTAssertEqual(after.order, liveOrder)
         XCTAssertEqual(after.othersIndex(for: "alex"), 0)
+    }
+
+    func testPipelineMicNameCollapsesToYouWhenMicLabelIsSet() throws {
+        let session = MeetingNotesSession()
+        session.setMicLabel("Mitko")
+        session.begin(title: "Call", appName: "Zoom")
+        session.applyFinalized("hi", channel: .mic, speaker: "Mitko")
+        XCTAssertEqual(
+            session.palette(for: session.turns(micLabel: "Mitko"), micLabel: "Mitko").order,
+            [SpeakerAccent.youKey],
+        )
+
+        let dir = try makeTempDirectory(prefix: "notes-mic-label")
+        let transcriptURL = dir.appendingPathComponent("t.txt")
+        try "[00:00] Mitko: from file\n[00:04] Alex: later\n".write(
+            to: transcriptURL,
+            atomically: true,
+            encoding: .utf8,
+        )
+        session.finishRecording()
+        var job = PipelineJob(
+            meetingTitle: "Call",
+            appName: "Zoom",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date(),
+        )
+        job.state = .done
+        job.transcriptPath = transcriptURL
+        let queue = PipelineQueue()
+        queue.jobs = [job]
+        session.sync(from: queue)
+
+        let turns = session.turns(micLabel: "Mitko")
+        XCTAssertTrue(turns.contains { $0.speakerRaw == "Mitko" && $0.isYou })
+        let palette = session.palette(for: turns, micLabel: "Mitko")
+        XCTAssertEqual(palette.order.first, SpeakerAccent.youKey)
+        XCTAssertFalse(palette.order.contains("mitko"))
+        XCTAssertTrue(turns.contains { $0.speakerRaw == "Alex" && !$0.isYou })
     }
 }

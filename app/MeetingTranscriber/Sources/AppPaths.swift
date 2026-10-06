@@ -46,8 +46,8 @@ enum AppPaths {
     /// Custom protocol prompt file.
     static let customPromptFile = dataDir.appendingPathComponent("protocol_prompt.md")
 
-    /// Private My-thoughts scratchpad (in-progress files). Job-bound thoughts
-    /// live beside the transcript/protocol as `{stem}.thoughts.md` instead.
+    /// Private My-thoughts scratchpad. In-progress and job-keyed files both
+    /// live here so they never sit beside shareable transcript/protocol notes.
     /// Never included in protocol prompts.
     static let thoughtsDir = dataDir.appendingPathComponent("thoughts", isDirectory: true)
 

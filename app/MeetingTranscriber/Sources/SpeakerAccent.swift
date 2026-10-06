@@ -26,6 +26,7 @@ enum SpeakerAccent {
         let key = SpeakerKey(encoded: trimmed)
         switch key.track {
         case .mic: return true
+
         case .app: return false
 
         case .single:
@@ -57,9 +58,9 @@ enum SpeakerAccent {
         return pretty(raw)
     }
 
-    static func color(isYou: Bool, othersIndex: Int, key: String = "") -> Color {
+    static func color(isYou: Bool, othersIndex: Int?, key: String = "") -> Color {
         if isYou { return youColor }
-        if othersIndex >= 0, othersIndex < others.count {
+        if let othersIndex, othersIndex >= 0, othersIndex < others.count {
             return others[othersIndex]
         }
         return hashedColor(for: key)
@@ -80,8 +81,8 @@ enum SpeakerAccent {
             order.append(key)
         }
 
-        func othersIndex(for key: String) -> Int {
-            order.filter { $0 != SpeakerAccent.youKey }.firstIndex(of: key) ?? 0
+        func othersIndex(for key: String) -> Int? {
+            order.filter { $0 != SpeakerAccent.youKey }.firstIndex(of: key)
         }
 
         var speakerCount: Int {
