@@ -121,7 +121,9 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `Settings/PickerLanguages.swift` | Language picker entries for WhisperKit and Parakeet language selectors |
 | `LiveCaptionsState.swift` | `@Observable` live-captions state (per-channel hypotheses + finalised utterances) + RPC-wire types |
 | `LiveCaptionsOverlay.swift` | SwiftUI caption-bar content (recent finals + per-channel hypotheses) hosted in `LiveCaptionsWindow` |
-| `LiveCaptionsWindowController.swift` | Borderless click-through NSPanel hosting the caption overlay (⌥-drag to reposition; origin persisted) |
+| `LiveCaptionsWindowController.swift` | Borderless click-through NSPanel hosting the caption overlay (⌥-drag to reposition); placement and drag-tracking split out to `CaptionBarPlacement`/`CaptionDragSession` |
+| `CaptionBarPlacement.swift` | Pure decision for where the caption bar lands on `show()`/preset change: kept in place when reachable, moved only when it isn't |
+| `CaptionDragSession.swift` | Pure decision for which of the panel's reported moves are the user's drag (vs. the post-release slide) and so get saved as the new origin |
 | `LiveCaptionsSize.swift` | Caption-bar size presets (Small/Medium/Large): font size paired with the fixed panel dimensions that fit it; `AppSettings.liveCaptionsSize` |
 | `ProcessingStatsView.swift` | Read-only average per-stage processing durations from `stage_timing.jsonl` (Settings → Advanced) |
 
@@ -147,6 +149,7 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `ConsentPromptCoordinator.swift` | Coordinates an async yes/no recording-consent prompt: register pending decision by id, resolve once via answer or timeout |
 | `WatchLoop+Consent.swift` | Browser-meeting consent gate, split out of `WatchLoop`; only patterns with `requiresRecordingConsent` reach it |
 | `DualSourceRecorder.swift` | Orchestrates AudioTapLib capture + mic, mixes tracks |
+| `DualSourceRecorder+TapPIDs.swift` | Resolves which PIDs a recording taps for a meeting-matched root PID (bundle enumeration + root fallback), split out of `DualSourceRecorder` (line-cap) |
 | `RecordingProvider.swift` | Protocol abstraction over `DualSourceRecorder` for mock injection in `WatchLoop` tests |
 | `WatchLoop+RecordOnly.swift` | Record-only output branch (moves WAVs + writes `RecordingSidecar`), split out of `WatchLoop` |
 | `ProtocolResumePolicy.swift` | Decides what the snapshot restore does with a job interrupted mid-run: resume from the saved transcript, just finish, or run in full. Keys on the interrupted stage, never on "a transcript exists", because stage 1 writes a draft without speaker labels |
@@ -206,6 +209,7 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `OutputDirectoryResolver.swift` | Decides a recording's output folder at the two seams that capture it (queue build, record-only write); notifies once per episode when the chosen folder cannot be reached and the default stands in |
 | `WatchingController.swift` | `@Observable` controller owning `WatchLoop` lifecycle (wired by `AppState`) |
 | `WatchingController+Detectors.swift` | Which detection strategies auto-watch runs, and how the "Apps to Watch" toggles filter them — line-cap split, pure and settings-driven |
+| `WatchingController+RecorderFactory.swift` | Builds the `recorderFactory` closure `WatchLoop` uses to get a fresh, per-recording `DualSourceRecorder`, wiring in live-caption sinks when eligible — line-cap split |
 | `WatchingController+WatchControl.swift` | The `/v1/watch` control surface: meeting watching as an idempotent resource a remote caller can drive |
 | `WatchingController+RecordControl.swift` | The `/v1/record` control surface: microphone-only recording as an idempotent resource a remote caller can drive |
 | `WatchStatusDTO.swift` | Wire shape for `GET`/`POST /v1/watch` — the meeting-watching lifecycle as a small, stable projection |
@@ -254,6 +258,9 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `tools/audiotap/Sources/AppAudioCapture+LiveSink.swift` | Live-buffer forwarding from CATap IOProc into `LiveAudioBuffer` sinks (line-cap split) |
 | `tools/audiotap/Sources/AppAudioCapture+AggregateDescription.swift` | The CFDictionary describing the private aggregate device wrapping a process tap (line-cap split from `AppAudioCapture`) |
 | `tools/audiotap/Sources/AppAudioCapture+Restart.swift` | Output-device-change restart path: off-main-queue, generation-tagged, deadline-bounded attempts (issue #588; line-cap split) |
+| `tools/audiotap/Sources/AppAudioCapture+SilentTrackWatchdog.swift` | Wiring + log lines for the opt-in silent-track watchdog: drives a tap rebuild through the same restart path as a device change when `SilentTrackWatchdogPolicy` calls for one (issue #672 part 2) |
+| `tools/audiotap/Sources/SilentTrackWatchdogPolicy.swift` | Pure decision policy for the silent-track watchdog: when a zero run is worth rebuilding the tap for, how often, whether a rebuild helped, and when to stop trying |
+| `tools/audiotap/Sources/SilentTrackWatchdogLimits.swift` | The watchdog's public threshold constants (trigger window, retry/backoff budget) — user-facing copy interpolates these rather than restating them |
 | `tools/audiotap/Sources/AppTapSession.swift` | Owns one tap attempt's HAL resources (tap, aggregate device, IOProc) and their release ordering, injectable for testing without hardware |
 | `tools/audiotap/Sources/MicCaptureHandler.swift` | AVAudioEngine → WAV |
 | `tools/audiotap/Sources/MicCaptureHandler+Restart.swift` | Mic-side device-change restart path: off-main-queue, generation-tagged, deadline-bounded attempts (issue #588; same pattern as `AppAudioCapture+Restart`) |
@@ -424,6 +431,8 @@ AudioTapLib (CATapDescription)
 **Restart bounding (issue #588):** a device-change restart on either channel can wedge inside AVFAudio/CoreAudio and never return (e.g. `AVAudioEngine.inputNode` looping on a dangling Bluetooth sub-device held by coreaudiod). `RestartArbiter` bounds how long a single restart attempt may run — attempts carry a generation and run off the main queue, so a result from a wedged attempt that eventually returns is rejected rather than adopted. `CaptureRestartRetryPolicy` bounds how many attempts are made and is shared by both channels. A channel that gives up tells the user directly (`AudioCaptureSession`/`DualSourceRecorder` expose which one) instead of only decaying to silence, which the asymmetric-silence detector would otherwise misreport as a routing/mute problem rather than a channel that is gone for good.
 
 **Safari support (issue #524):** the app-audio tap targets processes via macOS's *responsible-process* attribution (`ProcessResponsibility`) as well as bundle-path enumeration (`ProcessTreeEnumerator`) — Safari's call audio comes from WebKit XPC services outside `Safari.app`, unlike Electron/Chrome helpers that live inside their own bundle.
+
+**Silent-track watchdog, opt-in (issue #672 part 2):** when the app track has sat at exact zeros for a minute while buffers keep arriving and a tapped process still reports output, `SilentTrackWatchdogPolicy` can call for a tap rebuild through the same device-change restart path above, bounded by the same `RestartArbiter`/`CaptureRestartRetryPolicy`. Off by default (Settings → Audio); a give-up surfaces as a "Capture Channel Silent" fault rather than silently decaying. Full log-line reference in `CLAUDE.md`'s Diagnostics section.
 
 ### Processing (DualSourceRecorder.stop())
 
