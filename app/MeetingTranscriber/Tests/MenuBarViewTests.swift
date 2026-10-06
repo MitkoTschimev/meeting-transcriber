@@ -172,7 +172,8 @@ final class MenuBarViewTests: XCTestCase {
 
     func testMeetingNotesButtonCallsCallback() throws {
         var called = false
-        let sut = makeView(status: makeStatus()) { called = true }
+        // swiftlint:disable:next trailing_closure
+        let sut = makeView(status: makeStatus(), onOpenMeetingNotes: { called = true })
         try sut.inspect().find(button: "Meeting Notes...").tap()
         XCTAssertTrue(called)
     }
