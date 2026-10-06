@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum MeetingNotesTab: String, CaseIterable, Identifiable {
+    case thoughts
     case transcript
     case summary
 
@@ -10,17 +11,24 @@ enum MeetingNotesTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .thoughts: "My thoughts"
         case .transcript: "Transcript"
         case .summary: "Summary"
         }
     }
+
+    var accessibilityID: String {
+        switch self {
+        case .thoughts: A11yID.meetingNotesThoughtsTab
+        case .transcript: A11yID.meetingNotesTranscriptTab
+        case .summary: A11yID.meetingNotesSummaryTab
+        }
+    }
 }
 
-/// Dedicated meeting-notes window: live transcript plus action-item notes.
-///
-/// Layout is modelled on a notes-app meeting page (title, timestamp, two tabs,
-/// generating placeholder) rather than the menu-bar popover. Branding and
-/// assets of any third-party app are not used.
+/// Dedicated meeting-notes window: private scratchpad, live transcript, and
+/// action-item notes. Layout is modelled on a notes-app meeting page (title,
+/// timestamp, tabs). Branding and assets of any third-party app are not used.
 struct MeetingNotesView: View {
     @Bindable var session: MeetingNotesSession
     @Bindable var settings: AppSettings
@@ -47,12 +55,16 @@ struct MeetingNotesView: View {
         "Enable live transcription in Settings → Transcribe to see the transcript "
             + "while recording. The full transcript still appears here after the meeting is processed."
 
+    static let thoughtsPrivacyHint =
+        "My thoughts are private local notes — they are not included in transcripts, summaries, or protocol files."
+
     var body: some View {
         VStack(spacing: 0) {
             header
             tabBar
             Divider()
             tabContent
+            MeetingNotesAskBar()
         }
         .frame(minWidth: 640, minHeight: 520)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -61,7 +73,7 @@ struct MeetingNotesView: View {
             session.sync(from: queue)
         }
         .onChange(of: session.phase) { _, phase in
-            if phase == .generatingNotes || phase == .ready {
+            if phase == .generatingNotes || phase == .ready, tab != .thoughts {
                 tab = .summary
             }
         }
@@ -72,6 +84,10 @@ struct MeetingNotesView: View {
         queue.jobs.map { job in
             "\(job.id.uuidString):\(job.state.rawValue):\(job.transcriptPath?.path ?? ""):\(job.protocolPath?.path ?? "")"
         }.joined(separator: "|")
+    }
+
+    private var micLabel: String {
+        settings.micName.isEmpty ? "Me" : settings.micName
     }
 
     private var header: some View {
@@ -138,12 +154,15 @@ struct MeetingNotesView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier(item == .transcript ? A11yID.meetingNotesTranscriptTab : A11yID.meetingNotesSummaryTab)
+        .accessibilityIdentifier(item.accessibilityID)
         .accessibilityAddTraits(tab == item ? .isSelected : [])
     }
 
     @ViewBuilder private var tabContent: some View {
         switch tab {
+        case .thoughts:
+            thoughtsPane
+
         case .transcript:
             transcriptPane
 
@@ -152,69 +171,64 @@ struct MeetingNotesView: View {
         }
     }
 
-    private var transcriptPane: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                Group {
-                    if session.hasTranscript {
-                        Text(session.transcriptText)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 24)
-                            .id("transcript-end")
-                    } else {
-                        transcriptEmpty
-                    }
+    private var thoughtsPane: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(Self.thoughtsPrivacyHint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            ZStack(alignment: .topLeading) {
+                if session.thoughts.isEmpty {
+                    Text("Write privately…")
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
+                        .padding(.leading, 4)
+                        .allowsHitTesting(false)
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
-            }
-            .onChange(of: session.lines.count) { _, _ in
-                proxy.scrollTo("transcript-end", anchor: .bottom)
-            }
-            .onChange(of: session.hypothesisMic) { _, _ in
-                proxy.scrollTo("transcript-end", anchor: .bottom)
-            }
-            .onChange(of: session.hypothesisApp) { _, _ in
-                proxy.scrollTo("transcript-end", anchor: .bottom)
+                TextEditor(text: $session.thoughts)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(.leading, -4)
             }
         }
-        .accessibilityIdentifier(A11yID.meetingNotesTranscript)
+        .padding(.horizontal, 28)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityIdentifier(A11yID.meetingNotesThoughts)
     }
 
-    private var transcriptEmpty: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if session.phase == .recording {
-                if liveTranscriptionEnabled {
-                    Text("Listening… the transcript appears here as people speak.")
-                } else {
-                    Text(Self.liveTranscriptionHint)
-                }
-            } else if session.phase == .processing {
-                Text("Transcribing the recording…")
-            } else {
-                Text("No transcript yet. Start a recording, or process an audio file, to fill this page.")
-            }
+    private var transcriptPane: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let turns = session.turns(micLabel: micLabel)
+            MeetingNotesTranscriptPane(
+                turns: turns,
+                palette: TranscriptTurn.palette(for: turns, micLabel: micLabel),
+                micLabel: micLabel,
+                duration: session.duration(at: context.date),
+                liveTranscriptionEnabled: liveTranscriptionEnabled,
+                phase: session.phase,
+                emptyHint: liveTranscriptionEnabled
+                    ? "Listening… the transcript appears here as people speak."
+                    : Self.liveTranscriptionHint,
+            )
         }
-        .font(.body)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 12)
     }
 
     private var summaryPane: some View {
-        ScrollView {
+        let turns = session.turns(micLabel: micLabel)
+        let palette = TranscriptTurn.palette(for: turns, micLabel: micLabel)
+        let mentions = SpeakerMentionText.mentions(from: turns, palette: palette, micLabel: micLabel)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if session.phase == .generatingNotes {
                     NotesGeneratingPlaceholder(style: settings.protocolStyle)
                 } else if let notes = session.notesMarkdown, !notes.isEmpty {
-                    notesBody(notes)
+                    SpeakerMentionText(markdown: notes, mentions: mentions)
                 } else if session.phase == .failed {
                     Text(session.errorMessage ?? "Notes could not be generated. The transcript was saved.")
                         .foregroundStyle(.red)
                 } else {
-                    draftOrWaiting
+                    draftOrWaiting(mentions: mentions)
                 }
             }
             .padding(.horizontal, 28)
@@ -225,7 +239,8 @@ struct MeetingNotesView: View {
         .accessibilityIdentifier(A11yID.meetingNotesSummary)
     }
 
-    @ViewBuilder private var draftOrWaiting: some View {
+    @ViewBuilder
+    private func draftOrWaiting(mentions: [SpeakerMentionText.Mention]) -> some View {
         let drafts = session.draftActionItems
         if session.phase == .recording || session.phase == .processing, !drafts.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -237,8 +252,7 @@ struct MeetingNotesView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 ForEach(Array(drafts.enumerated()), id: \.offset) { _, item in
-                    Text("• \(item)")
-                        .textSelection(.enabled)
+                    SpeakerMentionText(markdown: "• \(item)", mentions: mentions)
                 }
             }
         } else if session.phase == .recording {
@@ -252,22 +266,6 @@ struct MeetingNotesView: View {
         } else {
             Text("No notes yet.")
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func notesBody(_ markdown: String) -> some View {
-        if let attributed = try? AttributedString(
-            markdown: markdown,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace),
-        ) {
-            Text(attributed)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text(markdown)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -325,6 +323,25 @@ struct NotesGeneratingPlaceholder: View {
             .frame(height: 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, (1 - width) * 280)
+    }
+}
+
+/// Disabled layout stub. Ask-anything chat is out of this slice.
+struct MeetingNotesAskBar: View {
+    var body: some View {
+        HStack {
+            Text("Ask anything")
+                .foregroundStyle(.tertiary)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .accessibilityLabel("Ask anything is not available yet")
+        .accessibilityIdentifier(A11yID.meetingNotesAskBar)
+        .allowsHitTesting(false)
     }
 }
 

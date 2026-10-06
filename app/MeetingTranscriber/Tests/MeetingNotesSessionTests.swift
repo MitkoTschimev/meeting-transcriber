@@ -18,12 +18,14 @@ final class MeetingNotesSessionTests: XCTestCase {
     func testSecondBeginWhileRecordingRetitlesWithoutWipingLines() {
         let session = MeetingNotesSession()
         session.begin(title: "Meeting", appName: "")
+        session.thoughts = "keep this"
         session.applyFinalized("hello", channel: .mic, speaker: "Me")
         session.begin(title: "Standup", appName: "Teams")
 
         XCTAssertEqual(session.title, "Standup")
         XCTAssertEqual(session.appName, "Teams")
         XCTAssertEqual(session.lines.map(\.text), ["hello"])
+        XCTAssertEqual(session.thoughts, "keep this")
         XCTAssertEqual(session.phase, .recording)
     }
 
@@ -31,11 +33,13 @@ final class MeetingNotesSessionTests: XCTestCase {
         let session = MeetingNotesSession()
         session.begin(title: "One", appName: "Zoom")
         session.applyFinalized("first", channel: .mic, speaker: "Me")
+        session.thoughts = "scratch"
         session.finishRecording()
         session.begin(title: "Two", appName: "Teams")
 
         XCTAssertEqual(session.title, "Two")
         XCTAssertTrue(session.lines.isEmpty)
+        XCTAssertEqual(session.thoughts, "")
         XCTAssertEqual(session.phase, .recording)
     }
 

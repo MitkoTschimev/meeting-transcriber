@@ -35,6 +35,10 @@ final class MeetingNotesSession {
     private(set) var jobID: UUID?
     private(set) var errorMessage: String?
 
+    /// Private scratchpad for the My thoughts tab. Never written into the
+    /// transcript, summary, or protocol files.
+    var thoughts: String = ""
+
     /// Paths already loaded, so `sync` does not re-read the same file every
     /// job-state tick.
     private var loadedTranscriptPath: URL?
@@ -75,6 +79,16 @@ final class MeetingNotesSession {
 
     var draftActionItems: [String] {
         ActionItemDraft.items(from: lines)
+    }
+
+    func turns(micLabel: String) -> [TranscriptTurn] {
+        TranscriptTurn.build(
+            liveLines: lines,
+            hypothesisMic: hypothesisMic,
+            hypothesisApp: hypothesisApp,
+            pipelineTranscript: pipelineTranscript,
+            micLabel: micLabel,
+        )
     }
 
     func duration(at now: Date = Date()) -> TimeInterval {
@@ -203,6 +217,7 @@ final class MeetingNotesSession {
         errorMessage = nil
         loadedTranscriptPath = nil
         loadedNotesPath = nil
+        thoughts = ""
     }
 
     private static func readFile(_ url: URL) -> String? {

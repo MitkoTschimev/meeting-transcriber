@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class MeetingNotesViewTests: XCTestCase {
-    func testShowsTitleAndTranscriptTab() throws {
+    func testShowsTitleAndThreeTabs() throws {
         let session = MeetingNotesSession()
         session.begin(title: "Hyperliquid API Integration Challenges", appName: "Zoom")
         session.applyFinalized("Let's look at the rate limits.", channel: .app, speaker: "Alex")
@@ -17,9 +17,46 @@ final class MeetingNotesViewTests: XCTestCase {
         )
         let body = try view.inspect()
         XCTAssertNoThrow(try body.find(text: "Hyperliquid API Integration Challenges"))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesThoughtsTab))
         XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesTranscriptTab))
         XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSummaryTab))
-        XCTAssertNoThrow(try body.find(text: "Alex: Let's look at the rate limits."))
+        XCTAssertNoThrow(try body.find(text: "Alex"))
+        XCTAssertNoThrow(try body.find(text: "Let's look at the rate limits."))
+        XCTAssertNoThrow(try body.find(text: "1 SPEAKER"))
+    }
+
+    func testTranscriptLabelsLocalSpeakerAsYou() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Call", appName: "Zoom")
+        session.applyFinalized("I'll take it.", channel: .mic, speaker: "Me")
+        let pane = MeetingNotesTranscriptPane(
+            turns: session.turns(micLabel: "Me"),
+            palette: TranscriptTurn.palette(for: session.turns(micLabel: "Me"), micLabel: "Me"),
+            micLabel: "Me",
+            duration: 12,
+            liveTranscriptionEnabled: true,
+            phase: .recording,
+            emptyHint: "Listening",
+        )
+        let body = try pane.inspect()
+        XCTAssertNoThrow(try body.find(text: "Me (You)"))
+        XCTAssertNoThrow(try body.find(text: "I'll take it."))
+        XCTAssertNoThrow(try body.find(text: "1 SPEAKER · 0:12"))
+    }
+
+    func testThoughtsTabShowsPrivacyHint() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Call", appName: "Zoom")
+        let view = MeetingNotesView(
+            session: session,
+            settings: makeSettings(),
+            queue: PipelineQueue(),
+            liveTranscriptionEnabled: true,
+            initialTab: .thoughts,
+        )
+        let body = try view.inspect()
+        XCTAssertNoThrow(try body.find(text: MeetingNotesView.thoughtsPrivacyHint))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesThoughts))
     }
 
     func testSummaryTabShowsDraftActionItemsWhileRecording() throws {
@@ -74,6 +111,19 @@ final class MeetingNotesViewTests: XCTestCase {
         )
         let body = try view.inspect()
         XCTAssertNoThrow(try body.find(text: MeetingNotesView.liveTranscriptionHint))
+    }
+
+    func testAskBarStubIsPresent() throws {
+        let session = MeetingNotesSession()
+        let view = MeetingNotesView(
+            session: session,
+            settings: makeSettings(),
+            queue: PipelineQueue(),
+            liveTranscriptionEnabled: false,
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesAskBar),
+        )
     }
 
     private func makeSettings() -> AppSettings {
