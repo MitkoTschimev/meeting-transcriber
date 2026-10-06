@@ -229,7 +229,7 @@ struct MeetingNotesView: View {
 
     private var transcriptPane: some View {
         let turns = session.turns(micLabel: micLabel)
-        MeetingNotesTranscriptPane(
+        return MeetingNotesTranscriptPane(
             turns: turns,
             palette: session.palette(for: turns, micLabel: micLabel),
             micLabel: micLabel,
