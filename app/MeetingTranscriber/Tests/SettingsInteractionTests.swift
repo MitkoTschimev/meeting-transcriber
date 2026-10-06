@@ -70,6 +70,19 @@ final class SettingsInteractionTests: XCTestCase {
         XCTAssertEqual(settings.protocolProvider, .openAICompatible)
     }
 
+    func testNotesStylePickerSelectionWritesBackToSettings() throws {
+        let settings = makeSettings()
+        XCTAssertEqual(settings.protocolStyle, .actionItems)
+        let view = OutputSettingsView(settings: settings)
+
+        let picker = try view.inspect().find(ViewType.Picker.self) { picker in
+            try picker.labelView().text().string() == "Notes Style"
+        }
+        try picker.select(value: ProtocolStyle.brief)
+
+        XCTAssertEqual(settings.protocolStyle, .brief)
+    }
+
     // MARK: - Transcript output toggles
 
     func testIncludeFullTranscriptToggleWritesBackToSettings() throws {

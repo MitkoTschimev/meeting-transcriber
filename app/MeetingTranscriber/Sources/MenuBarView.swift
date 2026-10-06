@@ -21,6 +21,7 @@ struct MenuBarView: View {
     let onOpenLastProtocol: () -> Void
     let onOpenProtocol: (URL) -> Void
     let onOpenProtocolsFolder: () -> Void
+    var onOpenMeetingNotes: () -> Void = {}
     let onOpenSettings: () -> Void
     let onNameSpeakers: (() -> Void)?
     let onProcessFiles: () -> Void
@@ -203,6 +204,13 @@ struct MenuBarView: View {
         } label: {
             Label("Open Protocols Folder", systemImage: "folder")
         }
+
+        Button {
+            onOpenMeetingNotes()
+        } label: {
+            Label("Meeting Notes...", systemImage: "doc.richtext")
+        }
+        .keyboardShortcut("l")
     }
 
     @ViewBuilder private var updateSection: some View {

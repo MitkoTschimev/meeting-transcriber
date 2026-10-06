@@ -448,6 +448,12 @@ final class AppSettings {
         didSet { defaults.set(protocolLanguage, forKey: "protocolLanguage") }
     }
 
+    /// Shape of generated notes. Defaults to action-item notes; a custom
+    /// prompt file, when present, still overrides the built-in prompt.
+    var protocolStyle: ProtocolStyle {
+        didSet { defaults.set(protocolStyle.rawValue, forKey: "protocolStyle") }
+    }
+
     /// Append the verbatim transcript to generated Markdown meeting minutes.
     /// Defaults to `true` to preserve the output format used before this option
     /// was introduced.
@@ -634,6 +640,8 @@ final class AppSettings {
             claudeBin = defaults.object(forKey: "claudeBin") as? String ?? "claude"
         #endif
         protocolLanguage = defaults.string(forKey: "protocolLanguage") ?? "German"
+        protocolStyle = (defaults.string(forKey: "protocolStyle")
+            .flatMap(ProtocolStyle.init(rawValue:))) ?? .preferred
         includeFullTranscriptInProtocol = defaults.object(forKey: "includeFullTranscriptInProtocol") as? Bool ?? true
         saveRawTranscriptSeparately = defaults.object(forKey: "saveRawTranscriptSeparately") as? Bool ?? true
 

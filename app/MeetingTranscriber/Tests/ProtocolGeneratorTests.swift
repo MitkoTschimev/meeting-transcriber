@@ -359,8 +359,12 @@ final class ProtocolGeneratorTests: XCTestCase {
 
     func testLoadPromptReturnsDefaultWhenNoFile() {
         let url = makeTempFile(suffix: ".md")
-        // File doesn't exist → loadPrompt falls back to the built-in default.
-        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolGenerator.protocolPrompt)
+        // File doesn't exist → loadPrompt falls back to the preferred style.
+        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolStyle.preferred.prompt)
+        XCTAssertEqual(
+            ProtocolGenerator.loadPrompt(from: url, style: .meetingProtocol),
+            ProtocolGenerator.protocolPrompt,
+        )
     }
 
     func testLoadPromptReadsCustomFile() throws {
@@ -375,14 +379,14 @@ final class ProtocolGeneratorTests: XCTestCase {
         let url = makeTempFile(suffix: ".md")
         try "".write(to: url, atomically: true, encoding: .utf8)
 
-        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolGenerator.protocolPrompt)
+        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolStyle.preferred.prompt)
     }
 
     func testLoadPromptIgnoresWhitespaceOnlyFile() throws {
         let url = makeTempFile(suffix: ".md")
         try "   \n  \n  ".write(to: url, atomically: true, encoding: .utf8)
 
-        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolGenerator.protocolPrompt)
+        XCTAssertEqual(ProtocolGenerator.loadPrompt(from: url), ProtocolStyle.preferred.prompt)
     }
 
     #if !APPSTORE

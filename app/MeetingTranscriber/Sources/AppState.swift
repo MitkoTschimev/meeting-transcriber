@@ -162,6 +162,10 @@ final class AppState {
     /// by the overlay window + RPC snapshot) and injected into `liveTranscription`.
     let liveCaptions: LiveCaptionsState = .init()
 
+    /// Full-session transcript + notes for the dedicated meeting-notes window.
+    /// Distinct from `liveCaptions`, which only keeps two overlay lines.
+    let meetingNotes: MeetingNotesSession = .init()
+
     /// Live-transcription controller lifecycle (lazy creation against the active
     /// engine, pre-warm, per-recording sink installation), extracted into its own
     /// coordinator. `WatchingController`'s recorder factory delegates sink
@@ -210,6 +214,7 @@ final class AppState {
 
     // MARK: - Init
 
+    // swiftlint:disable:next function_body_length
     init(
         settings: AppSettings = AppState.makeDefaultSettings(),
         notifier: any AppNotifying = SilentNotifier(),
@@ -257,7 +262,10 @@ final class AppState {
             channelHealth: channelHealth,
             permissions: permissions,
             liveTranscription: liveTranscription,
+            meetingNotes: meetingNotes,
         )
+
+        liveCaptions.notes = meetingNotes
 
         #if !APPSTORE
             // Not trailing-closure: `isEnabled` is the first param (the other two

@@ -213,7 +213,7 @@
 
         /// Project the pinning-relevant properties of each named scene window.
         /// Only windows carrying a scene identifier (settings, speaker-naming,
-        /// record-app) are included; transient/system windows are skipped.
+        /// record-app, meeting-notes) are included; transient/system windows are skipped.
         /// Extracted (like the other `*Snapshot` helpers) to keep the
         /// `rpcStateSnapshot` literal under the type-check budget.
         private func windowsSnapshot() -> [RPCStateSnapshot.WindowInfo] {

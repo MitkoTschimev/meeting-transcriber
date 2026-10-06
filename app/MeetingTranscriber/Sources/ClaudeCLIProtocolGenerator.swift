@@ -9,6 +9,7 @@
     struct ClaudeCLIProtocolGenerator: ProtocolGenerating {
         let claudeBin: String
         let language: String
+        let style: ProtocolStyle
 
         /// User-supplied key from Settings → Protocol Generation (`AppSettings.claudeAPIKey`),
         /// injected only when the user has explicitly typed one in. Not
@@ -18,9 +19,15 @@
         /// previously-working install (both measured — see PR #692 review).
         let anthropicAPIKey: String?
 
-        init(claudeBin: String, language: String, anthropicAPIKey: String? = nil) {
+        init(
+            claudeBin: String,
+            language: String,
+            style: ProtocolStyle = .preferred,
+            anthropicAPIKey: String? = nil,
+        ) {
             self.claudeBin = claudeBin
             self.language = language
+            self.style = style
             self.anthropicAPIKey = anthropicAPIKey
         }
 
@@ -36,13 +43,19 @@
 
         // MARK: - ProtocolGenerating
 
+        // swiftlint:disable:next function_body_length
         func generate(
             transcript: String,
             title _: String,
             diarized: Bool,
             meetingStartTime: Date?,
         ) async throws -> String {
-            let prompt = ProtocolGenerator.buildSystemPrompt(diarized: diarized, language: language, meetingStartTime: meetingStartTime) + transcript
+            let prompt = ProtocolGenerator.buildSystemPrompt(
+                diarized: diarized,
+                language: language,
+                meetingStartTime: meetingStartTime,
+                style: style,
+            ) + transcript
 
             let process = Process()
             let resolvedBin = Self.resolveClaudePath(claudeBin)

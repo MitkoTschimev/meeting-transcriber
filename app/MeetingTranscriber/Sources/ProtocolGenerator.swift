@@ -97,15 +97,19 @@ enum ProtocolGenerator {
 
     /// Load the protocol generation prompt. Reads from `url` (default
     /// `AppPaths.customPromptFile`) when present and non-empty; falls back
-    /// to the built-in `protocolPrompt`. The `url` parameter exists so tests
-    /// can use unique per-test paths instead of racing on the shared one.
-    static func loadPrompt(from url: URL = AppPaths.customPromptFile) -> String {
+    /// to the built-in prompt for `style` (default: action items). The `url`
+    /// parameter exists so tests can use unique per-test paths instead of
+    /// racing on the shared one.
+    static func loadPrompt(
+        from url: URL = AppPaths.customPromptFile,
+        style: ProtocolStyle = .preferred,
+    ) -> String {
         if let custom = try? String(contentsOf: url, encoding: .utf8),
            !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             logger.info("Using custom protocol prompt from \(url.path)")
             return custom
         }
-        return protocolPrompt
+        return style.prompt
     }
 
     /// Build the system prompt from an optional authoritative meeting-time context,
@@ -122,12 +126,13 @@ enum ProtocolGenerator {
         diarized: Bool,
         language: String,
         meetingStartTime: Date?,
+        style: ProtocolStyle = .preferred,
         promptURL: URL = AppPaths.customPromptFile,
         timeZone: TimeZone = .autoupdatingCurrent,
     ) -> String {
         let metadata = meetingStartTime.map { meetingMetadata(for: $0, timeZone: timeZone) }
         var prompt = meetingTimeContext(metadata: metadata) + applyVariables(
-            loadPrompt(from: promptURL),
+            loadPrompt(from: promptURL, style: style),
             language: language,
             metadata: metadata,
         )

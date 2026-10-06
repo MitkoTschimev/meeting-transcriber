@@ -74,7 +74,7 @@
         /// Contains no secrets.
         let updateStatus: UpdateStatus
         /// Pinning-relevant properties of each named scene window (settings,
-        /// speaker-naming, record-app). Lets the e2e-app naming-confirm lane
+        /// speaker-naming, record-app, meeting-notes). Lets the e2e-app naming-confirm lane
         /// assert the speaker-naming window is pinned — floating + joins all
         /// Spaces + shows over full-screen apps — so it stays reachable when the
         /// user switches apps (issue #504). Asserting on these properties, not
@@ -395,6 +395,8 @@
                 /// `ProtocolProvider` raw value ("claudeCLI" | "openAICompatible" | "none").
                 let provider: String
                 let language: String
+                /// `ProtocolStyle` raw value ("action_items" | "meeting_protocol" | "brief").
+                let style: String
                 let openAIEndpoint: String
                 let openAIModel: String
                 /// Claude CLI binary name/path (non-secret). The App Store build
@@ -402,7 +404,7 @@
                 let claudeBin: String
 
                 static let empty = Self(
-                    provider: "", language: "", openAIEndpoint: "",
+                    provider: "", language: "", style: "", openAIEndpoint: "",
                     openAIModel: "", claudeBin: "",
                 )
             }
