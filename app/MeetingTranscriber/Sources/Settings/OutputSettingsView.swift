@@ -97,6 +97,16 @@ struct OutputSettingsView: View {
                     }
                 }
 
+                Picker("Notes Style", selection: $settings.protocolStyle) {
+                    ForEach(ProtocolStyle.allCases, id: \.self) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .accessibilityIdentifier(A11yID.protocolStylePicker)
+                Text("Action items is the default. A custom prompt file, if set, overrides the built-in style.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 promptControls
             }
             .accessibilityIdentifier(A11yID.protocolSection)

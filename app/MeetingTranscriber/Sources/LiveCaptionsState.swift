@@ -49,6 +49,13 @@ final class LiveCaptionsState {
     /// matching doesn't return a confident name (unknown remote speaker).
     let appLabel: String
 
+    /// Optional session that keeps the full recording transcript. The overlay
+    /// only keeps two lines and auto-clears; forwarding finals/partials here
+    /// is how the meeting-notes window stays live. `clear()` is overlay-only
+    /// and must not wipe the session. Observation-ignored: this is a sink, not
+    /// overlay display state.
+    @ObservationIgnored weak var notes: MeetingNotesSession?
+
     init(micLabel: String = "Me", appLabel: String = "Remote") {
         self.micLabel = micLabel
         self.appLabel = appLabel
@@ -109,6 +116,7 @@ final class LiveCaptionsState {
         }
         lastEventAt = Date()
         scheduleAutoClear()
+        notes?.applyPartial(text, channel: channel)
     }
 
     func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String) {
@@ -122,6 +130,7 @@ final class LiveCaptionsState {
         }
         lastEventAt = Date()
         scheduleAutoClear()
+        notes?.applyFinalized(text, channel: channel, speaker: speaker)
     }
 
     /// Convenience: speaker defaults to the channel label. Used by tests

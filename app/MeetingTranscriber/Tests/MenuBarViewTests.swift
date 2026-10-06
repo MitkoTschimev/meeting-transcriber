@@ -37,6 +37,7 @@ final class MenuBarViewTests: XCTestCase {
         onNameSpeakers: (() -> Void)? = nil,
         onStopManualRecording: (() -> Void)? = nil,
         onRecordMicrophone: @escaping () -> Void = {},
+        onOpenMeetingNotes: @escaping () -> Void = {},
         noMic: Bool = false,
         manualRecordingPendingOrActive: Bool = false,
     ) -> MenuBarView {
@@ -54,6 +55,7 @@ final class MenuBarViewTests: XCTestCase {
             onOpenLastProtocol: {},
             onOpenProtocol: { _ in },
             onOpenProtocolsFolder: {},
+            onOpenMeetingNotes: onOpenMeetingNotes,
             onOpenSettings: {},
             onNameSpeakers: onNameSpeakers,
             onProcessFiles: {},
@@ -160,6 +162,20 @@ final class MenuBarViewTests: XCTestCase {
         let sut = makeView(status: makeStatus())
         let body = try sut.inspect()
         XCTAssertNoThrow(try body.find(text: "Open Protocols Folder"))
+    }
+
+    func testMeetingNotesButtonExists() throws {
+        let sut = makeView(status: makeStatus())
+        let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(text: "Meeting Notes..."))
+    }
+
+    func testMeetingNotesButtonCallsCallback() throws {
+        var called = false
+        // swiftlint:disable:next trailing_closure
+        let sut = makeView(status: makeStatus(), onOpenMeetingNotes: { called = true })
+        try sut.inspect().find(button: "Meeting Notes...").tap()
+        XCTAssertTrue(called)
     }
 
     func testQuitButtonExists() throws {

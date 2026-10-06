@@ -126,4 +126,20 @@ enum A11yID {
 
     // Live captions overlay.
     static let liveCaptionBackend = "liveCaptionBackend"
+
+    /// Settings → Output notes-style picker.
+    static let protocolStylePicker = "protocolStylePicker"
+
+    // Meeting notes window.
+    static let meetingNotesTitle = "meetingNotesTitle"
+    static let meetingNotesThoughtsTab = "meetingNotesThoughtsTab"
+    static let meetingNotesTranscriptTab = "meetingNotesTranscriptTab"
+    static let meetingNotesSummaryTab = "meetingNotesSummaryTab"
+    static let meetingNotesStylePicker = "meetingNotesStylePicker"
+    static let meetingNotesTranscript = "meetingNotesTranscript"
+    static let meetingNotesSummary = "meetingNotesSummary"
+    static let meetingNotesGenerating = "meetingNotesGenerating"
+    static let meetingNotesThoughts = "meetingNotesThoughts"
+    static let meetingNotesSpeakerChrome = "meetingNotesSpeakerChrome"
+    static let meetingNotesAskBar = "meetingNotesAskBar"
 }

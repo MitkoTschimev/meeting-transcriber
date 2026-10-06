@@ -9,6 +9,7 @@ extension Notification.Name {
     static let showSpeakerNaming = Notification.Name("showSpeakerNaming")
     static let showSettings = Notification.Name("showSettings")
     static let closeSettings = Notification.Name("closeSettings")
+    static let showMeetingNotes = Notification.Name("showMeetingNotes")
 }
 
 /// Renders the menu-bar icon and ticks the animation frame in its own
@@ -124,6 +125,7 @@ struct MeetingTranscriberApp: App {
         speakerNamingWindow
         settingsWindow
         recordAppWindow
+        meetingNotesWindow
     }
 
     // MARK: - Menu Bar
@@ -145,6 +147,9 @@ struct MeetingTranscriberApp: App {
             onOpenLastProtocol: openLastProtocol,
             onOpenProtocol: { url in NSWorkspace.shared.open(url) },
             onOpenProtocolsFolder: openProtocolsFolder,
+            onOpenMeetingNotes: {
+                bringWindowToFront(id: "meeting-notes")
+            },
             onOpenSettings: {
                 bringWindowToFront(id: "settings")
             },
@@ -185,6 +190,9 @@ struct MeetingTranscriberApp: App {
         }
         .onReceive(NotificationCenter.default.publisher(for: .closeSettings)) { _ in
             closeWindow(id: "settings")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showMeetingNotes)) { _ in
+            bringWindowToFront(id: "meeting-notes")
         }
         .task {
             await appState.engines.preloadActiveModel()
@@ -292,6 +300,18 @@ struct MeetingTranscriberApp: App {
             )
         }
         .windowResizability(.contentSize)
+    }
+
+    private var meetingNotesWindow: some Scene {
+        Window("Meeting Notes", id: "meeting-notes") {
+            MeetingNotesView(
+                session: appState.meetingNotes,
+                settings: appState.settings,
+                queue: appState.pipeline.queue,
+                liveTranscriptionEnabled: appState.settings.liveTranscriptionEnabled,
+            )
+        }
+        .defaultSize(width: 720, height: 780)
     }
 
     // MARK: - Speaker Naming Window

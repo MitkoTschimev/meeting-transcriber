@@ -2,6 +2,7 @@ import Foundation
 @testable import MeetingTranscriber
 import XCTest
 
+// swiftlint:disable file_length
 // swiftlint:disable:next type_body_length
 final class AppSettingsTests: XCTestCase {
     // swiftlint:disable:next implicitly_unwrapped_optional
@@ -65,6 +66,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.liveTranscriptionEnabled)
         XCTAssertTrue(settings.liveCaptionsOverlayEnabled)
         XCTAssertEqual(settings.liveCaptionsSize, .medium)
+        XCTAssertEqual(settings.protocolStyle, .actionItems)
     }
 
     func test_activeEngineLanguageOrNil_followsWhisperKitLanguage() {
@@ -349,6 +351,18 @@ final class AppSettingsTests: XCTestCase {
         // Verify a fresh instance reads it back from the same suite.
         let fresh = AppSettings(defaults: defaults)
         XCTAssertEqual(fresh.protocolProvider, .openAICompatible)
+    }
+
+    func testProtocolStyleDefaultsToActionItems() {
+        XCTAssertEqual(settings.protocolStyle, .actionItems)
+        XCTAssertEqual(settings.protocolStyle, .preferred)
+    }
+
+    func testProtocolStylePersistence() {
+        settings.protocolStyle = .brief
+        XCTAssertEqual(defaults.string(forKey: "protocolStyle"), "brief")
+        let fresh = AppSettings(defaults: defaults)
+        XCTAssertEqual(fresh.protocolStyle, .brief)
     }
 
     func testTranscriptOutputOptionsDefaultToEnabled() {

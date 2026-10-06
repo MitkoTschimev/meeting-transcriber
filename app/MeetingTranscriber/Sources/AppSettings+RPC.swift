@@ -83,6 +83,7 @@
             RPCStateSnapshot.Settings.ProtocolGeneration(
                 provider: protocolProvider.rawValue,
                 language: protocolLanguage,
+                style: protocolStyle.rawValue,
                 openAIEndpoint: openAIEndpoint,
                 openAIModel: openAIModel,
                 claudeBin: claudeBin,

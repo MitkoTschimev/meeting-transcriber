@@ -186,6 +186,7 @@ struct PipelineJob: Identifiable, Codable {
         includeFullTranscriptInProtocol: Bool? = nil,
         // swiftlint:disable:next discouraged_optional_boolean
         saveRawTranscriptSeparately: Bool? = nil,
+        enqueuedAt: Date = Date(),
     ) {
         self.id = UUID()
         self.meetingTitle = meetingTitle
@@ -195,7 +196,7 @@ struct PipelineJob: Identifiable, Codable {
         self.micPath = micPath
         self.micDelay = micDelay
         self.participants = participants
-        self.enqueuedAt = Date()
+        self.enqueuedAt = enqueuedAt
         self.meetingStartTime = meetingStartTime
         self.state = .waiting
         self.error = nil

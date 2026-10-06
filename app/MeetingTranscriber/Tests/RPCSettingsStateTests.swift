@@ -60,6 +60,7 @@
             XCTAssertFalse(s.diarization.vadEnabled)
             XCTAssertEqual(s.diarization.clusterThreshold, AppSettings.DiarizerTuningDefaults.clusterThreshold)
             XCTAssertEqual(s.protocolGeneration.language, "German")
+            XCTAssertEqual(s.protocolGeneration.style, ProtocolStyle.preferred.rawValue)
             XCTAssertTrue(s.updates.checkForUpdates)
             XCTAssertFalse(s.updates.includePreReleases)
         }
@@ -109,6 +110,7 @@
             settings.parakeetLanguage = "fr"
             settings.diarizerMode = .sortformer
             settings.protocolProvider = .openAICompatible
+            settings.protocolStyle = .brief
 
             let s = settings.rpcSettingsSnapshot()
 
@@ -122,6 +124,8 @@
             XCTAssertEqual(s.diarization.mode, DiarizerMode.sortformer.rawValue)
             XCTAssertEqual(s.protocolGeneration.provider, "openAICompatible")
             XCTAssertEqual(s.protocolGeneration.provider, ProtocolProvider.openAICompatible.rawValue)
+            XCTAssertEqual(s.protocolGeneration.style, "brief")
+            XCTAssertEqual(s.protocolGeneration.style, ProtocolStyle.brief.rawValue)
         }
 
         func test_snapshot_protocolProviderNone_mapsToNoneRawValue() {
@@ -247,6 +251,7 @@
                 "diarization.warmStartFb", "diarization.minSegmentDurationSeconds",
                 "diarization.excludeOverlap",
                 "protocolGeneration.provider", "protocolGeneration.language",
+                "protocolGeneration.style",
                 "protocolGeneration.openAIEndpoint", "protocolGeneration.openAIModel",
                 "protocolGeneration.claudeBin",
                 "output.directory", "output.hasCustomDirectory", "output.hasCustomPrompt",

@@ -352,6 +352,7 @@ final class PipelineController {
                 ClaudeCLIProtocolGenerator(
                     claudeBin: settings.claudeBin,
                     language: settings.protocolLanguage,
+                    style: settings.protocolStyle,
                     anthropicAPIKey: settings.claudeAPIKey.isEmpty ? nil : settings.claudeAPIKey,
                 )
         #endif
@@ -363,6 +364,7 @@ final class PipelineController {
                     ?? URL(string: AppSettings.defaultOpenAIEndpoint)!,
                 model: settings.openAIModel,
                 language: settings.protocolLanguage,
+                style: settings.protocolStyle,
                 apiKey: settings.openAIAPIKey.isEmpty ? nil : settings.openAIAPIKey,
             )
 

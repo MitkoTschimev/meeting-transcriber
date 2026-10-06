@@ -9,6 +9,7 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
     let model: String
     let apiKey: String?
     let language: String
+    let style: ProtocolStyle
     /// Idle timeout (`URLRequest.timeoutInterval`): max time *between* received
     /// bytes. Catches a fully-stalled connection, but does NOT bound total time —
     /// a slow-but-trickling stream resets it on every byte. See `maxTotalSeconds`.
@@ -39,6 +40,7 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         endpoint: URL,
         model: String,
         language: String,
+        style: ProtocolStyle = .preferred,
         apiKey: String? = nil,
         timeoutSeconds: TimeInterval = 600,
         maxTotalSeconds: TimeInterval = 1800,
@@ -48,6 +50,7 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         self.endpoint = endpoint
         self.model = model
         self.language = language
+        self.style = style
         self.apiKey = apiKey
         self.timeoutSeconds = timeoutSeconds
         self.maxTotalSeconds = maxTotalSeconds
@@ -65,6 +68,7 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
             diarized: diarized,
             language: language,
             meetingStartTime: meetingStartTime,
+            style: style,
         )
 
         let messages: [[String: Any]] = [
