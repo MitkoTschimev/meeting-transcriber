@@ -29,11 +29,13 @@ final class MeetingNotesViewTests: XCTestCase {
         let session = MeetingNotesSession()
         session.begin(title: "Call", appName: "Zoom")
         session.applyFinalized("I'll take it.", channel: .mic, speaker: "Me")
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
         let pane = MeetingNotesTranscriptPane(
             turns: session.turns(micLabel: "Me"),
             palette: TranscriptTurn.palette(for: session.turns(micLabel: "Me"), micLabel: "Me"),
             micLabel: "Me",
-            duration: 12,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(12),
             liveTranscriptionEnabled: true,
             phase: .recording,
             emptyHint: "Listening",
@@ -124,6 +126,92 @@ final class MeetingNotesViewTests: XCTestCase {
         XCTAssertNoThrow(
             try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesAskBar),
         )
+    }
+
+    func testTabAfterPhaseChangeLeavesTranscriptWhenUserPickedIt() {
+        XCTAssertEqual(
+            MeetingNotesView.tabAfterPhaseChange(
+                phase: .ready,
+                current: .transcript,
+                userPickedTab: true,
+            ),
+            .transcript,
+        )
+        XCTAssertEqual(
+            MeetingNotesView.tabAfterPhaseChange(
+                phase: .generatingNotes,
+                current: .thoughts,
+                userPickedTab: false,
+            ),
+            .thoughts,
+        )
+        XCTAssertEqual(
+            MeetingNotesView.tabAfterPhaseChange(
+                phase: .ready,
+                current: .transcript,
+                userPickedTab: false,
+            ),
+            .summary,
+        )
+        XCTAssertEqual(
+            MeetingNotesView.tabAfterPhaseChange(
+                phase: .recording,
+                current: .transcript,
+                userPickedTab: false,
+            ),
+            .transcript,
+        )
+    }
+
+    func testStylePickerDisablesOnceNotesExist() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Planning", appName: "Meet")
+        session.finishRecording()
+        session.applyGeneratedNotes("Ship it")
+
+        let view = MeetingNotesView(
+            session: session,
+            settings: makeSettings(),
+            queue: PipelineQueue(),
+            liveTranscriptionEnabled: false,
+            initialTab: .summary,
+        )
+        let body = try view.inspect()
+        XCTAssertTrue(
+            try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStylePicker).isDisabled(),
+        )
+        XCTAssertNoThrow(try body.find(text: "applies to next meeting"))
+    }
+
+    func testSummaryShowsWarningsWhenReadyWithoutNotes() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Planning", appName: "Meet")
+        session.finishRecording()
+        var job = PipelineJob(
+            meetingTitle: "Planning",
+            appName: "Meet",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date(),
+        )
+        job.state = .done
+        job.warnings = ["Protocol generation skipped"]
+        let queue = PipelineQueue()
+        queue.jobs = [job]
+        session.sync(from: queue)
+
+        let view = MeetingNotesView(
+            session: session,
+            settings: makeSettings(),
+            queue: queue,
+            liveTranscriptionEnabled: false,
+            initialTab: .summary,
+        )
+        let body = try view.inspect()
+        XCTAssertNoThrow(try body.find(text: "Protocol generation skipped"))
+        XCTAssertThrowsError(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesGenerating))
     }
 
     private func makeSettings() -> AppSettings {

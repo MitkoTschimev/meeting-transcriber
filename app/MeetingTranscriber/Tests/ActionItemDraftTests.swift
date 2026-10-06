@@ -33,4 +33,11 @@ final class ActionItemDraftTests: XCTestCase {
         ]
         XCTAssertTrue(ActionItemDraft.items(from: lines).isEmpty)
     }
+
+    func testPleaseAndBitteMatchWithTrailingPunctuation() {
+        XCTAssertTrue(ActionItemDraft.matches("please, send the file"))
+        XCTAssertTrue(ActionItemDraft.matches("Bitte. Öffne das Ticket."))
+        XCTAssertFalse(ActionItemDraft.matches("skill issue"))
+        XCTAssertFalse(ActionItemDraft.matches("sicher"))
+    }
 }

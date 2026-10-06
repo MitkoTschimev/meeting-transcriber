@@ -8,8 +8,8 @@ enum ActionItemDraft {
     /// English + German commitment phrasing. Anchored on word boundaries so
     /// "I'll" / "ich werde" fire and "skill" / "sicher" do not.
     static let patterns = [
-        #"\b(i['’]ll|i will|let'?s|we should|we need to|we will|action item|follow[- ]up|can you|could you|please |todo|to do|assign)\b"#,
-        #"\b(ich werde|lass uns|wir sollten|wir müssen|wir werden|aufgabe|kannst du|könnt ihr|bitte )\b"#,
+        #"\b(i['’]ll|i will|let'?s|we should|we need to|we will|action item|follow[- ]up|can you|could you|please|todo|to do|assign)\b"#,
+        #"\b(ich werde|lass uns|wir sollten|wir müssen|wir werden|aufgabe|kannst du|könnt ihr|bitte)\b"#,
     ]
 
     static func items(from lines: [LiveCaptionLine]) -> [String] {

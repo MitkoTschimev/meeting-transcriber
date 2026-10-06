@@ -87,8 +87,8 @@ final class TranscriptTurnTests: XCTestCase {
         XCTAssertEqual(formattedClockDuration(3661), "1:01:01")
     }
 
-    func testPaletteCountsUniqueSpeakersIncludingYou() {
-        let turns = TranscriptTurn.build(
+    func testPaletteKeepsFirstSeenOrderAcrossLiveToPipelineHandoff() {
+        let live = TranscriptTurn.build(
             liveLines: [
                 LiveCaptionLine(channel: .mic, text: "a", speaker: "Me"),
                 LiveCaptionLine(channel: .app, text: "b", speaker: "Alex"),
@@ -98,7 +98,24 @@ final class TranscriptTurnTests: XCTestCase {
             pipelineTranscript: nil,
             micLabel: "Me",
         )
-        let palette = TranscriptTurn.palette(for: turns, micLabel: "Me")
-        XCTAssertEqual(palette.speakerCount, 2)
+        let seeded = TranscriptTurn.palette(for: live, micLabel: "Me")
+        XCTAssertEqual(seeded.order, [SpeakerAccent.youKey, "alex"])
+
+        let pipeline = TranscriptTurn.build(
+            liveLines: [],
+            hypothesisMic: "",
+            hypothesisApp: "",
+            pipelineTranscript: """
+            [00:00] Alex: from file
+            [00:04] Me: later
+            """,
+            micLabel: "Me",
+        )
+        let handedOff = TranscriptTurn.palette(for: pipeline, micLabel: "Me", existing: seeded)
+        XCTAssertEqual(handedOff.order, seeded.order)
+        XCTAssertEqual(
+            handedOff.othersIndex(for: "alex"),
+            seeded.othersIndex(for: "alex"),
+        )
     }
 }

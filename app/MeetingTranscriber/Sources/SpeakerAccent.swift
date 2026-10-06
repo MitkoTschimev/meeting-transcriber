@@ -23,11 +23,18 @@ enum SpeakerAccent {
     static func isYou(_ raw: String, micLabel: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        if trimmed.compare("Me", options: .caseInsensitive) == .orderedSame { return true }
-        if !micLabel.isEmpty, trimmed.compare(micLabel, options: .caseInsensitive) == .orderedSame {
-            return true
+        let key = SpeakerKey(encoded: trimmed)
+        switch key.track {
+        case .mic: return true
+        case .app: return false
+
+        case .single:
+            if trimmed.compare("Me", options: .caseInsensitive) == .orderedSame { return true }
+            if !micLabel.isEmpty, trimmed.compare(micLabel, options: .caseInsensitive) == .orderedSame {
+                return true
+            }
+            return false
         }
-        return SpeakerKey(encoded: trimmed).track == .mic
     }
 
     static func identityKey(_ raw: String, micLabel: String) -> String {
@@ -50,19 +57,27 @@ enum SpeakerAccent {
         return pretty(raw)
     }
 
-    static func color(isYou: Bool, othersIndex: Int) -> Color {
+    static func color(isYou: Bool, othersIndex: Int, key: String = "") -> Color {
         if isYou { return youColor }
-        let idx = ((othersIndex % others.count) + others.count) % others.count
-        return others[idx]
+        if othersIndex >= 0, othersIndex < others.count {
+            return others[othersIndex]
+        }
+        return hashedColor(for: key)
     }
 
     /// First-seen order of non-you speakers; `youKey` is tracked but skipped
     /// when assigning the others palette so the local user always stays orange.
+    /// `order` is append-only so a live→diarized handoff keeps colors.
     struct Palette: Equatable {
-        private(set) var order: [String] = []
+        private(set) var order: [String]
+
+        init(order: [String] = []) {
+            self.order = order
+        }
 
         mutating func register(_ key: String) {
-            if !order.contains(key) { order.append(key) }
+            guard !key.isEmpty, !order.contains(key) else { return }
+            order.append(key)
         }
 
         func othersIndex(for key: String) -> Int {
@@ -74,8 +89,19 @@ enum SpeakerAccent {
         }
 
         func color(forKey key: String, isYou: Bool) -> Color {
-            SpeakerAccent.color(isYou: isYou, othersIndex: othersIndex(for: key))
+            SpeakerAccent.color(isYou: isYou, othersIndex: othersIndex(for: key), key: key)
         }
+    }
+
+    /// Stable hue for speakers beyond the fixed palette. djb2 so a given
+    /// identityKey maps to the same color across process launches (`hashValue` does not).
+    static func hashedColor(for key: String) -> Color {
+        var hash: UInt64 = 5381
+        for byte in key.utf8 {
+            hash = ((hash &<< 5) &+ hash) &+ UInt64(byte)
+        }
+        let hue = Double(hash % 360) / 360.0
+        return Color(hue: hue, saturation: 0.55, brightness: 0.72)
     }
 
     static func pretty(_ raw: String) -> String {

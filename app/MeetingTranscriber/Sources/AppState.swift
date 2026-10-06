@@ -164,7 +164,9 @@ final class AppState {
 
     /// Full-session transcript + notes for the dedicated meeting-notes window.
     /// Distinct from `liveCaptions`, which only keeps two overlay lines.
-    let meetingNotes: MeetingNotesSession = .init()
+    let meetingNotes: MeetingNotesSession = .init(
+        thoughtsStore: MeetingThoughtsStore(directory: AppPaths.thoughtsDir),
+    )
 
     /// Live-transcription controller lifecycle (lazy creation against the active
     /// engine, pre-warm, per-recording sink installation), extracted into its own

@@ -34,15 +34,29 @@ final class MeetingNotesSession {
     private(set) var notesMarkdown: String?
     private(set) var jobID: UUID?
     private(set) var errorMessage: String?
+    private(set) var warnings: [String] = []
+    private(set) var speakerPalette = SpeakerAccent.Palette()
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files.
-    var thoughts: String = ""
+    var thoughts: String = "" {
+        didSet {
+            guard !isLoadingThoughts, thoughts != oldValue else { return }
+            persistThoughts()
+        }
+    }
 
     /// Paths already loaded, so `sync` does not re-read the same file every
     /// job-state tick.
     private var loadedTranscriptPath: URL?
     private var loadedNotesPath: URL?
+    private let thoughtsStore: MeetingThoughtsStore?
+    private var thoughtsURL: URL?
+    private var isLoadingThoughts = false
+
+    init(thoughtsStore: MeetingThoughtsStore? = nil) {
+        self.thoughtsStore = thoughtsStore
+    }
 
     var hasSession: Bool {
         phase != .idle || !lines.isEmpty || pipelineTranscript != nil || notesMarkdown != nil
@@ -91,6 +105,12 @@ final class MeetingNotesSession {
         )
     }
 
+    /// Append-only palette so live→diarized handoff keeps first-seen colors.
+    /// Pure merge — does not store, so SwiftUI body can call it freely.
+    func palette(for turns: [TranscriptTurn], micLabel: String) -> SpeakerAccent.Palette {
+        TranscriptTurn.palette(for: turns, micLabel: micLabel, existing: speakerPalette)
+    }
+
     func duration(at now: Date = Date()) -> TimeInterval {
         guard let startedAt else { return 0 }
         let end = endedAt ?? now
@@ -106,12 +126,15 @@ final class MeetingNotesSession {
             if !appName.isEmpty { self.appName = appName }
             return
         }
+        persistThoughts()
         resetContents()
         self.title = title
         self.appName = appName
         startedAt = startTime
         endedAt = nil
         phase = .recording
+        thoughtsURL = thoughtsStore?.inProgressURL(startedAt: startTime)
+        loadThoughtsFromCurrentURL()
     }
 
     func finishRecording() {
@@ -128,6 +151,9 @@ final class MeetingNotesSession {
         case .mic: hypothesisMic = text
         case .app: hypothesisApp = text
         }
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            registerSpeaker(channel == .mic ? "Me" : "Remote", isYou: channel == .mic)
+        }
     }
 
     func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String) {
@@ -139,6 +165,7 @@ final class MeetingNotesSession {
         case .app: hypothesisApp = ""
         }
         lines.append(LiveCaptionLine(channel: channel, text: trimmed, speaker: speaker))
+        registerSpeaker(speaker, isYou: channel == .mic)
     }
 
     func applyGeneratedNotes(_ markdown: String) {
@@ -149,8 +176,11 @@ final class MeetingNotesSession {
     }
 
     /// Pull transcript / notes / phase from the pipeline once a job exists.
-    /// Matching prefers `jobID`, then the same meeting title, then the newest job.
+    /// While recording (or before the session has ended) this does not bind a
+    /// job — an older same-title meeting must not replace the live transcript.
+    /// After `finishRecording`, only jobs enqueued at or after `startedAt`.
     func sync(from queue: PipelineQueue) {
+        if shouldDeferJobBinding { return }
         guard let job = matchingJob(in: queue) else { return }
         jobID = job.id
         if title.isEmpty { title = job.meetingTitle }
@@ -158,11 +188,13 @@ final class MeetingNotesSession {
         if startedAt == nil { startedAt = job.meetingStartTime ?? job.enqueuedAt }
 
         applyPhase(from: job)
+        adoptThoughtsFile(for: job)
 
         if let path = job.transcriptPath, path != loadedTranscriptPath,
            let text = Self.readFile(path) {
             pipelineTranscript = text
             loadedTranscriptPath = path
+            rememberPipelineSpeakers(text)
         }
         if let path = job.protocolPath, path != loadedNotesPath,
            let text = Self.readFile(path) {
@@ -175,7 +207,14 @@ final class MeetingNotesSession {
         }
     }
 
+    /// Recording has no pipeline job yet. Binding by title / newest job would
+    /// load another meeting's transcript and notes into this session.
+    private var shouldDeferJobBinding: Bool {
+        phase == .recording || (jobID == nil && endedAt == nil)
+    }
+
     private func applyPhase(from job: PipelineJob) {
+        warnings = job.warnings
         switch job.state {
         case .waiting, .transcribing, .diarizing, .speakerNamingPending:
             if phase == .recording { return }
@@ -185,7 +224,10 @@ final class MeetingNotesSession {
             phase = .generatingNotes
 
         case .done:
-            phase = notesMarkdown == nil && job.protocolPath == nil ? .processing : .ready
+            // Record-only and failed protocol generation both finish `.done`
+            // with no protocol file. Summary must leave the generating
+            // placeholder; `.failed` is reserved for `.error`.
+            phase = .ready
 
         case .error:
             phase = .failed
@@ -197,17 +239,34 @@ final class MeetingNotesSession {
         if let jobID, let match = all.first(where: { $0.id == jobID }) {
             return match
         }
+        let started = startedAt ?? .distantPast
+        let recent = all.filter { $0.enqueuedAt >= started }
+        guard !recent.isEmpty else { return nil }
+
         if !title.isEmpty {
-            let titled = all.filter { $0.meetingTitle == title }
+            let titled = recent.filter { $0.meetingTitle == title }
             if let newest = titled.max(by: { $0.enqueuedAt < $1.enqueuedAt }) {
                 return newest
             }
         }
-        if let active = queue.activeJobs.first { return active }
-        return all.last
+        let activeIDs = Set(queue.activeJobs.map(\.id))
+        if let active = recent.first(where: { activeIDs.contains($0.id) }) {
+            return active
+        }
+        return recent.max { $0.enqueuedAt < $1.enqueuedAt }
+    }
+
+    private func registerSpeaker(_ raw: String, isYou: Bool) {
+        speakerPalette.register(SpeakerAccent.identityKey(raw, micLabel: "", isYou: isYou))
+    }
+
+    private func rememberPipelineSpeakers(_ transcript: String) {
+        let parsed = TranscriptTurn.parsePipeline(transcript, micLabel: "")
+        speakerPalette = TranscriptTurn.palette(for: parsed, micLabel: "", existing: speakerPalette)
     }
 
     private func resetContents() {
+        isLoadingThoughts = true
         lines.removeAll()
         hypothesisMic = ""
         hypothesisApp = ""
@@ -215,9 +274,45 @@ final class MeetingNotesSession {
         notesMarkdown = nil
         jobID = nil
         errorMessage = nil
+        warnings = []
         loadedTranscriptPath = nil
         loadedNotesPath = nil
         thoughts = ""
+        thoughtsURL = nil
+        speakerPalette = SpeakerAccent.Palette()
+        isLoadingThoughts = false
+    }
+
+    private func loadThoughtsFromCurrentURL() {
+        guard let thoughtsStore, let thoughtsURL else { return }
+        isLoadingThoughts = true
+        thoughts = thoughtsStore.load(from: thoughtsURL) ?? ""
+        isLoadingThoughts = false
+    }
+
+    private func persistThoughts() {
+        guard let thoughtsStore, let thoughtsURL else { return }
+        thoughtsStore.save(thoughts, to: thoughtsURL)
+    }
+
+    private func adoptThoughtsFile(for job: PipelineJob) {
+        guard let thoughtsStore, let sibling = MeetingThoughtsStore.siblingURL(of: job) else {
+            return
+        }
+        if thoughtsURL != sibling {
+            if let previous = thoughtsURL, previous != sibling {
+                thoughtsStore.remove(previous)
+            }
+            thoughtsURL = sibling
+        }
+        if thoughts.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let stored = thoughtsStore.load(from: sibling) {
+            isLoadingThoughts = true
+            thoughts = stored
+            isLoadingThoughts = false
+        } else {
+            persistThoughts()
+        }
     }
 
     private static func readFile(_ url: URL) -> String? {

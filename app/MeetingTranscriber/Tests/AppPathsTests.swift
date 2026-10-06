@@ -47,6 +47,11 @@ final class AppPathsTests: XCTestCase {
         XCTAssertTrue(AppPaths.customPromptFile.path.hasPrefix(AppPaths.dataDir.path))
     }
 
+    func testThoughtsDirIsUnderDataDir() {
+        XCTAssertTrue(AppPaths.thoughtsDir.path.hasPrefix(AppPaths.dataDir.path))
+        XCTAssertTrue(AppPaths.thoughtsDir.path.hasSuffix("/thoughts"))
+    }
+
     // MARK: - migrateIfNeeded
 
     func testMigrateIfNeededIsIdempotent() {
@@ -88,6 +93,7 @@ final class AppPathsTests: XCTestCase {
             ("recordingsDir", AppPaths.recordingsDir),
             ("protocolsDir", AppPaths.protocolsDir),
             ("downloadsProtocolsDir", AppPaths.downloadsProtocolsDir),
+            ("thoughtsDir", AppPaths.thoughtsDir),
         ]
         for (name, url) in directories {
             XCTAssertTrue(url.hasDirectoryPath, "\(name) must not depend on whether it exists yet")

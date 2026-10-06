@@ -39,8 +39,14 @@ struct TranscriptTurn: Equatable, Identifiable {
         return "\(speakers) · \(formattedClockDuration(duration))"
     }
 
-    static func palette(for turns: [Self], micLabel: String) -> SpeakerAccent.Palette {
-        var palette = SpeakerAccent.Palette()
+    /// Append-only: `existing` keeps first-seen identityKeys so a live→diarized
+    /// handoff does not reshuffle accent colors when speaker order changes.
+    static func palette(
+        for turns: [Self],
+        micLabel: String,
+        existing: SpeakerAccent.Palette = SpeakerAccent.Palette(),
+    ) -> SpeakerAccent.Palette {
+        var palette = existing
         for turn in turns {
             let key = SpeakerAccent.identityKey(turn.speakerRaw, micLabel: micLabel, isYou: turn.isYou)
             palette.register(key)

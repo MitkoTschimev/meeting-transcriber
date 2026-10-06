@@ -85,7 +85,8 @@ struct SpeakerMentionText: View {
         if name.compare("Me", options: .caseInsensitive) == .orderedSame { return }
         if name.compare("Remote", options: .caseInsensitive) == .orderedSame { return }
         let escaped = NSRegularExpression.escapedPattern(for: name)
-        guard let regex = try? NSRegularExpression(pattern: escaped, options: .caseInsensitive) else { return }
+        let pattern = "(?<![[:alnum:]])" + escaped + "(?![[:alnum:]])"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return }
         let fullRange = NSRange(plain.startIndex..., in: plain)
         for match in regex.matches(in: plain, range: fullRange) {
             let range = match.range

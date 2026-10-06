@@ -36,6 +36,7 @@ struct MeetingNotesView: View {
     let liveTranscriptionEnabled: Bool
 
     @State private var tab: MeetingNotesTab
+    @State private var userPickedTab: Bool
 
     init(
         session: MeetingNotesSession,
@@ -49,6 +50,20 @@ struct MeetingNotesView: View {
         self.queue = queue
         self.liveTranscriptionEnabled = liveTranscriptionEnabled
         _tab = State(initialValue: initialTab)
+        _userPickedTab = State(initialValue: initialTab != .transcript)
+    }
+
+    /// Auto-switch to Summary only from the default Transcript tab when the
+    /// user has not picked a tab themselves. My thoughts and an explicit
+    /// Transcript choice stay put.
+    static func tabAfterPhaseChange(
+        phase: MeetingNotesPhase,
+        current: MeetingNotesTab,
+        userPickedTab: Bool,
+    ) -> MeetingNotesTab {
+        guard phase == .generatingNotes || phase == .ready else { return current }
+        guard !userPickedTab, current == .transcript else { return current }
+        return .summary
     }
 
     static let liveTranscriptionHint =
@@ -73,9 +88,11 @@ struct MeetingNotesView: View {
             session.sync(from: queue)
         }
         .onChange(of: session.phase) { _, phase in
-            if phase == .generatingNotes || phase == .ready, tab != .thoughts {
-                tab = .summary
-            }
+            tab = Self.tabAfterPhaseChange(
+                phase: phase,
+                current: tab,
+                userPickedTab: userPickedTab,
+            )
         }
     }
 
@@ -124,23 +141,36 @@ struct MeetingNotesView: View {
             }
             Spacer()
             if tab == .summary {
-                Picker("Notes style", selection: $settings.protocolStyle) {
-                    ForEach(ProtocolStyle.allCases, id: \.self) { style in
-                        Text(style.label).tag(style)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Picker("Notes style", selection: $settings.protocolStyle) {
+                        ForEach(ProtocolStyle.allCases, id: \.self) { style in
+                            Text(style.label).tag(style)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .accessibilityIdentifier(A11yID.meetingNotesStylePicker)
+                    .disabled(settings.recordOnly || notesExist)
+                    if notesExist {
+                        Text("applies to next meeting")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .pickerStyle(.menu)
-                .fixedSize()
-                .accessibilityIdentifier(A11yID.meetingNotesStylePicker)
-                .disabled(settings.recordOnly)
             }
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 4)
     }
 
+    private var notesExist: Bool {
+        if let notes = session.notesMarkdown, !notes.isEmpty { return true }
+        return false
+    }
+
     private func tabButton(_ item: MeetingNotesTab) -> some View {
         Button {
+            userPickedTab = true
             tab = item
         } label: {
             VStack(spacing: 6) {
@@ -198,28 +228,34 @@ struct MeetingNotesView: View {
     }
 
     private var transcriptPane: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let turns = session.turns(micLabel: micLabel)
-            MeetingNotesTranscriptPane(
-                turns: turns,
-                palette: TranscriptTurn.palette(for: turns, micLabel: micLabel),
-                micLabel: micLabel,
-                duration: session.duration(at: context.date),
-                liveTranscriptionEnabled: liveTranscriptionEnabled,
-                phase: session.phase,
-                emptyHint: liveTranscriptionEnabled
-                    ? "Listening… the transcript appears here as people speak."
-                    : Self.liveTranscriptionHint,
-            )
-        }
+        let turns = session.turns(micLabel: micLabel)
+        MeetingNotesTranscriptPane(
+            turns: turns,
+            palette: session.palette(for: turns, micLabel: micLabel),
+            micLabel: micLabel,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+            liveTranscriptionEnabled: liveTranscriptionEnabled,
+            phase: session.phase,
+            emptyHint: liveTranscriptionEnabled
+                ? "Listening… the transcript appears here as people speak."
+                : Self.liveTranscriptionHint,
+        )
     }
 
     private var summaryPane: some View {
         let turns = session.turns(micLabel: micLabel)
-        let palette = TranscriptTurn.palette(for: turns, micLabel: micLabel)
+        let palette = session.palette(for: turns, micLabel: micLabel)
         let mentions = SpeakerMentionText.mentions(from: turns, palette: palette, micLabel: micLabel)
         return ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if !session.warnings.isEmpty {
+                    ForEach(session.warnings, id: \.self) { warning in
+                        Text(warning)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if session.phase == .generatingNotes {
                     NotesGeneratingPlaceholder(style: settings.protocolStyle)
                 } else if let notes = session.notesMarkdown, !notes.isEmpty {
@@ -251,7 +287,7 @@ struct MeetingNotesView: View {
                 )
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                ForEach(Array(drafts.enumerated()), id: \.offset) { _, item in
+                ForEach(drafts, id: \.self) { item in
                     SpeakerMentionText(markdown: "• \(item)", mentions: mentions)
                 }
             }
@@ -260,6 +296,9 @@ struct MeetingNotesView: View {
                 .foregroundStyle(.secondary)
         } else if session.phase == .processing {
             NotesGeneratingPlaceholder(style: settings.protocolStyle)
+        } else if settings.recordOnly {
+            Text("Record-only is on — notes are not generated.")
+                .foregroundStyle(.secondary)
         } else if settings.protocolProvider == .none {
             Text("Notes are off — set an LLM provider in Settings → Output to generate a summary.")
                 .foregroundStyle(.secondary)

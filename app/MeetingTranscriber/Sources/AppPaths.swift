@@ -46,6 +46,11 @@ enum AppPaths {
     /// Custom protocol prompt file.
     static let customPromptFile = dataDir.appendingPathComponent("protocol_prompt.md")
 
+    /// Private My-thoughts scratchpad (in-progress files). Job-bound thoughts
+    /// live beside the transcript/protocol as `{stem}.thoughts.md` instead.
+    /// Never included in protocol prompts.
+    static let thoughtsDir = dataDir.appendingPathComponent("thoughts", isDirectory: true)
+
     /// Exists exactly while a run of this bundle is alive; see `LivenessMarker`.
     /// Named per bundle identifier because the dev and release builds share
     /// `dataDir`, and each must judge only its own previous run: one build's

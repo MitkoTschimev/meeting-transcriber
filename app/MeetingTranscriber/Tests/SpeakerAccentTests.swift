@@ -14,6 +14,8 @@ final class SpeakerAccentTests: XCTestCase {
         XCTAssertTrue(SpeakerAccent.isYou("M_SPEAKER_0", micLabel: "Me"))
         XCTAssertFalse(SpeakerAccent.isYou("R_SPEAKER_0", micLabel: "Me"))
         XCTAssertFalse(SpeakerAccent.isYou("SPEAKER_0", micLabel: "Me"))
+        XCTAssertFalse(SpeakerAccent.isYou("R_Mitko", micLabel: "Mitko"))
+        XCTAssertTrue(SpeakerAccent.isYou("M_Mitko", micLabel: "Me"))
     }
 
     func testSpeakerNumbersAreOneBasedDisplay() {
@@ -52,6 +54,17 @@ final class SpeakerAccentTests: XCTestCase {
         XCTAssertNotEqual(
             SpeakerAccent.identityKey("Kirill", micLabel: "Mitko"),
             SpeakerAccent.youKey,
+        )
+    }
+
+    func testHashedColorIsStableForIdentityKey() {
+        XCTAssertEqual(
+            SpeakerAccent.hashedColor(for: "alex"),
+            SpeakerAccent.hashedColor(for: "alex"),
+        )
+        XCTAssertNotEqual(
+            SpeakerAccent.hashedColor(for: "alex"),
+            SpeakerAccent.hashedColor(for: "kirill"),
         )
     }
 }
