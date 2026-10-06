@@ -2,6 +2,7 @@
 import SwiftUI
 import XCTest
 
+@MainActor
 final class SpeakerMentionTextTests: XCTestCase {
     func testInlineMentionDoesNotTintNameInsideLongerWord() {
         var attributed = AttributedString("Annual review with Ann")
