@@ -74,6 +74,37 @@ final class ProcessTreeEnumeratorTests: XCTestCase {
         XCTAssertEqual(found, [100])
     }
 
+    func testOutermostAppBundleWalksOutOfAnElectronHelper() {
+        let helper = URL(fileURLWithPath: "/Applications/GatherV2.app/Contents/Frameworks/Gather Helper.app")
+        XCTAssertEqual(
+            ProcessTreeEnumerator.outermostAppBundle(containing: helper).path,
+            "/Applications/GatherV2.app",
+        )
+    }
+
+    func testOutermostAppBundleWalksOutOfAChromiumVersionedHelper() {
+        let helper = URL(
+            fileURLWithPath: "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/131.0.6778.86/Helpers/Google Chrome Helper.app",
+        )
+        XCTAssertEqual(
+            ProcessTreeEnumerator.outermostAppBundle(containing: helper).path,
+            "/Applications/Google Chrome.app",
+        )
+    }
+
+    func testOutermostAppBundleLeavesAHostAppUnchanged() {
+        // A path that is not a symlink: `/Applications/Safari.app` itself
+        // resolves into the OS cryptex on current macOS, which would look like
+        // a walk even though the bundle is already outermost.
+        let host = URL(fileURLWithPath: "/tmp/FakeHost.app")
+        XCTAssertEqual(ProcessTreeEnumerator.outermostAppBundle(containing: host).path, host.path)
+    }
+
+    func testOutermostAppBundleLeavesAPathWithNoAppUnchanged() {
+        let cli = URL(fileURLWithPath: "/usr/bin/python3")
+        XCTAssertEqual(ProcessTreeEnumerator.outermostAppBundle(containing: cli).path, cli.path)
+    }
+
     func testLiveSnapshotIncludesCurrentProcess() {
         // Sanity check that the live helpers actually work — our own xctest
         // PID must show up in the kernel listing and resolve to a non-nil

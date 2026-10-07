@@ -1,4 +1,5 @@
 import AppKit
+import AudioTapLib
 import CoreAudio
 import os.log
 
@@ -36,9 +37,17 @@ class MicInputDetector: MeetingDetecting {
         /// a helper bundle such as `com.example.callapp.helper`.
         var matchesHelpers = false
         var usesBuiltInMeetingPattern = true
+        /// Host `.app` of a custom watch entry, so a helper whose bundle ID
+        /// does not share the main prefix still matches by containing-app path.
+        var appBundleURL: URL?
 
         func matches(bundleID: String) -> Bool {
             bundleIDs.contains { $0 == bundleID || (matchesHelpers && bundleID.hasPrefix($0 + ".")) }
+        }
+
+        func matchesContainingApp(outermostURL: URL) -> Bool {
+            guard matchesHelpers, let appBundleURL else { return false }
+            return appBundleURL.resolvingSymlinksInPath().path == outermostURL.resolvingSymlinksInPath().path
         }
 
         var meetingPattern: AppMeetingPattern {
@@ -87,11 +96,13 @@ class MicInputDetector: MeetingDetecting {
     }
 
     static func customPattern(bundleID: String) -> MicPattern {
-        MicPattern(
-            appName: appDisplayName(bundleID: bundleID),
-            bundleIDs: [bundleID],
+        let app = WatchedCustomApp.resolved(bundleID: bundleID)
+        return MicPattern(
+            appName: app.displayName,
+            bundleIDs: app.matchingBundleIDs,
             matchesHelpers: true,
             usesBuiltInMeetingPattern: false,
+            appBundleURL: app.appBundleURL,
         )
     }
 
@@ -100,7 +111,10 @@ class MicInputDetector: MeetingDetecting {
         return url.deletingPathExtension().lastPathComponent
     }
 
-    private let patterns: [MicPattern]
+    private let builtInPatterns: [MicPattern]
+    /// Re-read each poll so a Settings "Add App" takes effect without
+    /// restarting the watch loop (same contract as the consent deny list).
+    var customBundleIDsProvider: () -> [String] = { [] }
     private let confirmationCount: Int
     private var consecutiveHits: [String: Int] = [:]
     private var cooldownUntil: [String: Date] = [:]
@@ -119,6 +133,16 @@ class MicInputDetector: MeetingDetecting {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.processIdentifier
     }
 
+    /// Bundle URL of a live PID, for containing-app matching when a helper's
+    /// Core Audio bundle ID does not share the picked app's prefix.
+    var bundleURLProvider: (pid_t) -> URL? = { pid in
+        NSRunningApplication(processIdentifier: pid)?.bundleURL
+    }
+
+    private var patterns: [MicPattern] {
+        builtInPatterns + customBundleIDsProvider().map(Self.customPattern)
+    }
+
     private let matchers: [String: MeetingTitleMatcher]
 
     struct AudioProcessSnapshot {
@@ -131,7 +155,7 @@ class MicInputDetector: MeetingDetecting {
         patterns: [MicPattern] = MicInputDetector.defaultPatterns,
         confirmationCount: Int = 2,
     ) {
-        self.patterns = patterns
+        builtInPatterns = patterns
         self.confirmationCount = confirmationCount
         matchers = patterns.reduce(into: [:]) { dict, pattern in
             dict[pattern.meetingPattern.appName] = MeetingTitleMatcher(pattern: pattern.meetingPattern)
@@ -150,7 +174,7 @@ class MicInputDetector: MeetingDetecting {
         var firstMatch: [String: pid_t] = [:]
 
         for process in processes where process.isRunningInput {
-            guard let pattern = patterns.first(where: { $0.matches(bundleID: process.bundleID) }) else {
+            guard let pattern = matchingPattern(for: process) else {
                 logUnmatchedRunningInput(bundleID: process.bundleID)
                 continue
             }
@@ -187,16 +211,33 @@ class MicInputDetector: MeetingDetecting {
         let candidates = patterns.filter { $0.meetingPattern.appName == meeting.pattern.appName }
         guard !candidates.isEmpty else { return false }
         return processProvider().contains { process in
-            process.isRunningInput && candidates.contains { $0.matches(bundleID: process.bundleID) }
+            guard process.isRunningInput, let match = matchingPattern(for: process) else { return false }
+            return match.meetingPattern.appName == meeting.pattern.appName
         }
+    }
+
+    /// Bundle-ID prefix plus containing-app path, so a helper whose Core Audio
+    /// ID is `com.github.Electron.helper` still counts as the picked app.
+    private func matchingPattern(for process: AudioProcessSnapshot) -> MicPattern? {
+        if let pattern = patterns.first(where: { $0.matches(bundleID: process.bundleID) }) {
+            return pattern
+        }
+        guard let url = bundleURLProvider(process.pid) else { return nil }
+        let outer = ProcessTreeEnumerator.outermostAppBundle(containing: url)
+        return patterns.first { $0.matchesContainingApp(outermostURL: outer) }
     }
 
     /// A helper holding the mic is swapped for its main app, whose bundle the
     /// recorder expands to the whole process tree; tapping the helper's own
     /// nested bundle would miss the renderer playing the call audio.
+    ///
+    /// Compare against the *first* (picked) bundle ID, not the expanded helper
+    /// list: nested discovery puts helper IDs in `bundleIDs`, and treating those
+    /// as "already the main app" would tap the helper `.app` alone.
     private func tapRootPID(for process: AudioProcessSnapshot, pattern: MicPattern) -> pid_t {
-        guard !pattern.bundleIDs.contains(process.bundleID) else { return process.pid }
-        return pattern.bundleIDs.lazy.compactMap(mainAppPIDProvider).first ?? process.pid
+        guard let mainID = pattern.bundleIDs.first else { return process.pid }
+        if process.bundleID == mainID { return process.pid }
+        return mainAppPIDProvider(mainID) ?? process.pid
     }
 
     func reset(appName: String? = nil) {

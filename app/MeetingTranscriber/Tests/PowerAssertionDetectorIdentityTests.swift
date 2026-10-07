@@ -17,6 +17,23 @@ final class PowerAssertionDetectorIdentityTests: XCTestCase {
         XCTAssertEqual(teams?.identityKey(processName: "Microsoft Teams"), "Microsoft Teams")
     }
 
+    func testIdentifiesComparesTheIdentityKeyNotThePatternName() throws {
+        // Liveness used to compare `pattern.appName`, which is a category token
+        // for `.perProcess` patterns and would never match a detected browser.
+        let browser = try XCTUnwrap(
+            PowerAssertionDetector.defaultPatterns
+                .first { $0.appName == AppMeetingPattern.browserMeetings.appName },
+        )
+        XCTAssertTrue(browser.identifies(meetingAppName: "Brave Browser", processName: "Brave Browser"))
+        XCTAssertFalse(browser.identifies(meetingAppName: "Brave Browser", processName: "Microsoft Edge"))
+
+        let teams = try XCTUnwrap(
+            PowerAssertionDetector.defaultPatterns.first { $0.appName == "Microsoft Teams" },
+        )
+        XCTAssertTrue(teams.identifies(meetingAppName: "Microsoft Teams", processName: "MSTeams"))
+        XCTAssertFalse(teams.identifies(meetingAppName: "Zoom", processName: "MSTeams"))
+    }
+
     func testPerProcessPatternIdentityKeyIsTheConcreteProcess() {
         // The browser pattern carries each fork as itself, which is what gives
         // every browser its own confirmation count, cooldown and tap target.

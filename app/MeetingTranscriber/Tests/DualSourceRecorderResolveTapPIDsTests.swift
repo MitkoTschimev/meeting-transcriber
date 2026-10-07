@@ -45,4 +45,15 @@ final class DualSourceRecorderResolveTapPIDsTests: XCTestCase {
         let pids = DualSourceRecorder.resolveTapPIDs(rootPID: 42, bundleURL: bundle) { _ in [100, 200] }
         XCTAssertEqual(pids, [42, 100, 200], "the root must be prepended (first), not appended")
     }
+
+    func testResolveTapPIDsEnumeratesFromTheContainingAppWhenRootIsANestedHelper() {
+        let helper = URL(fileURLWithPath: "/Applications/GatherV2.app/Contents/Frameworks/Gather Helper.app")
+        var enumerated: URL?
+        let pids = DualSourceRecorder.resolveTapPIDs(rootPID: 555, bundleURL: helper) { url in
+            enumerated = url
+            return [100, 200, 555]
+        }
+        XCTAssertEqual(enumerated?.path, "/Applications/GatherV2.app")
+        XCTAssertEqual(pids, [100, 200, 555], "the host-app PID set is used as-is when it already contains the helper")
+    }
 }

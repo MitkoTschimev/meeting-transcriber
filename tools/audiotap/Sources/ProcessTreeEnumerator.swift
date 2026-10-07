@@ -10,6 +10,34 @@ import Foundation
 /// silence. Issue #84 reports this for Microsoft Teams 2.x; see
 /// `docs/plans/.local/open/2026-05-18-multi-pid-audio-tap-electron-apps.md`.
 public enum ProcessTreeEnumerator {
+    /// The outermost `.app` that contains `url`.
+    ///
+    /// Electron and Chromium helpers live *inside* the host app
+    /// (`Foo.app/Contents/Frameworks/Foo Helper.app`, or Chrome's
+    /// `…/Helpers/Google Chrome Helper.app` nested under a `.framework`).
+    /// A tap rooted at the helper bundle only sees that helper's PIDs and
+    /// misses the sibling renderer that plays the call audio. Walking out to
+    /// the host app is the PID-set the recorder actually wants.
+    ///
+    /// Already-outer bundles (Safari.app, Teams.app) are returned unchanged.
+    /// A path with no `.app` component is returned unchanged so a CLI tool
+    /// still falls back to its own PID.
+    public static func outermostAppBundle(containing url: URL) -> URL {
+        let resolved = url.resolvingSymlinksInPath()
+        var current = resolved
+        var outermost: URL?
+        if current.pathExtension.lowercased() == "app" {
+            outermost = current
+        }
+        while current.path != "/", !current.path.isEmpty {
+            current = current.deletingLastPathComponent()
+            if current.pathExtension.lowercased() == "app" {
+                outermost = current
+            }
+        }
+        return outermost ?? resolved
+    }
+
     /// Returns every running PID whose executable path resides under
     /// `bundleURL` (a `.app` bundle). Order is the kernel's listing order,
     /// which is not stable across calls.
