@@ -28,6 +28,10 @@ final class CalendarController {
     private let oauth: any GoogleOAuthPerforming
     private let nowProvider: () -> Date
     private var refreshTask: Task<Void, Never>?
+    /// Last successful Google fetch. Transient errors keep this slice so a
+    /// live meeting title is not blanked until the next good poll. Cleared on
+    /// auth failure and disconnect.
+    private var lastGoogleEvents: [CalendarEvent] = []
 
     var googleConnected: Bool {
         tokenStore.hasToken
@@ -101,14 +105,16 @@ final class CalendarController {
     }
 
     func disconnectGoogle() async {
-        if let token = tokenStore.read() {
-            await oauth.revoke(token)
-        }
+        let captured = tokenStore.read()
         tokenStore.delete()
         googleEmail = nil
         settings.googleCalendarEnabled = false
         lastError = nil
+        lastGoogleEvents = []
         await refresh()
+        if let captured {
+            await oauth.revoke(captured)
+        }
     }
 
     func refresh() async {
@@ -132,11 +138,19 @@ final class CalendarController {
         if settings.googleCalendarEnabled {
             do {
                 let google = try await googleEvents(from: start, to: end)
+                lastGoogleEvents = google
                 groups.append(google)
             } catch {
                 lastError = (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
                 logger.error("google_calendar_fetch_failed \(error.localizedDescription, privacy: .public)")
+                if settings.googleCalendarEnabled {
+                    groups.append(lastGoogleEvents)
+                } else {
+                    lastGoogleEvents = []
+                }
             }
+        } else {
+            lastGoogleEvents = []
         }
         let merged = CalendarAgenda.merge(groups)
         overlapEvents = CalendarAgenda.inWindow(merged, from: instant)
@@ -189,5 +203,6 @@ final class CalendarController {
         tokenStore.delete()
         googleEmail = nil
         settings.googleCalendarEnabled = false
+        lastGoogleEvents = []
     }
 }

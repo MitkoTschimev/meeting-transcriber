@@ -95,6 +95,32 @@ final class CalendarControllerTests: XCTestCase {
         XCTAssertNil(store.read())
     }
 
+    func testDisconnectDeletesKeychainBeforeRevokeSoReconnectSurvives() async throws {
+        let settings = try makeSettings()
+        let store = makeStore()
+        let oldToken = sampleToken(access: "old", refresh: "old-r")
+        try store.save(oldToken)
+        settings.googleCalendarEnabled = true
+        let oauth = StubGoogleOAuth()
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            oauth: oauth,
+        )
+        let newToken = sampleToken(access: "new", refresh: "new-r")
+        var emptyAtRevoke = false
+        oauth.onRevoke = {
+            emptyAtRevoke = store.read() == nil
+            try store.save(newToken)
+        }
+        await calendar.disconnectGoogle()
+        XCTAssertTrue(emptyAtRevoke)
+        XCTAssertEqual(oauth.lastRevoked?.refreshToken, "old-r")
+        XCTAssertEqual(store.read()?.accessToken, "new")
+        XCTAssertTrue(calendar.googleConnected)
+    }
+
     func testGoogleRefreshRestoresEmailAndListsEvents() async throws {
         let settings = try makeSettings()
         let store = makeStore()
@@ -275,12 +301,109 @@ final class CalendarControllerTests: XCTestCase {
         XCTAssertEqual(calendar.upcoming.first?.title, "Standup")
         XCTAssertNil(calendar.lastError)
     }
+
+    func testTransientGoogleFailureKeepsLastEventsForEnrichment() async throws {
+        let settings = try makeSettings()
+        let store = makeStore()
+        try store.save(sampleToken())
+        settings.googleCalendarEnabled = true
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let live = CalendarEvent(
+            id: "google:live",
+            title: "Standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+        )
+        let google = StubGoogleCalendarAPI(events: [live])
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            googleAPI: google,
+            oauth: StubGoogleOAuth(),
+        ) { now }
+        await calendar.refresh()
+        XCTAssertEqual(calendar.eventOverlapping(at: now)?.title, "Standup")
+        google.fetchError = GoogleOAuthError.server("500")
+        await calendar.refresh()
+        XCTAssertEqual(calendar.lastError, "500")
+        XCTAssertTrue(settings.googleCalendarEnabled)
+        XCTAssertTrue(store.hasToken)
+        XCTAssertEqual(calendar.eventOverlapping(at: now)?.title, "Standup")
+        XCTAssertEqual(calendar.upcoming.first?.title, "Standup")
+    }
+
+    func testAuthFailureClearsLastGoogleEvents() async throws {
+        let settings = try makeSettings()
+        let store = makeStore()
+        try store.save(sampleToken())
+        settings.googleCalendarEnabled = true
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let live = CalendarEvent(
+            id: "google:live",
+            title: "Standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+        )
+        let google = StubGoogleCalendarAPI(events: [live])
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            googleAPI: google,
+            oauth: StubGoogleOAuth(),
+        ) { now }
+        await calendar.refresh()
+        XCTAssertEqual(calendar.eventOverlapping(at: now)?.title, "Standup")
+        google.fetchError = GoogleOAuthError.unauthorized
+        await calendar.refresh()
+        XCTAssertEqual(calendar.lastError, GoogleOAuthError.unauthorized.errorDescription)
+        XCTAssertFalse(store.hasToken)
+        XCTAssertFalse(settings.googleCalendarEnabled)
+        XCTAssertNil(calendar.eventOverlapping(at: now))
+        XCTAssertTrue(calendar.upcoming.isEmpty)
+    }
+
+    func testDisconnectClearsLastGoogleEvents() async throws {
+        let settings = try makeSettings()
+        let store = makeStore()
+        try store.save(sampleToken())
+        settings.googleCalendarEnabled = true
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let live = CalendarEvent(
+            id: "google:live",
+            title: "Standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+        )
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            googleAPI: StubGoogleCalendarAPI(events: [live]),
+            oauth: StubGoogleOAuth(),
+        ) { now }
+        await calendar.refresh()
+        XCTAssertEqual(calendar.eventOverlapping(at: now)?.title, "Standup")
+        await calendar.disconnectGoogle()
+        XCTAssertNil(calendar.eventOverlapping(at: now))
+        XCTAssertTrue(calendar.upcoming.isEmpty)
+    }
 }
 
-private struct StubGoogleCalendarAPI: GoogleCalendarFetching {
-    var events: [CalendarEvent] = []
+private final class StubGoogleCalendarAPI: GoogleCalendarFetching, @unchecked Sendable {
+    var events: [CalendarEvent]
     var email: String?
     var fetchError: (any Error)?
+
+    init(events: [CalendarEvent] = [], email: String? = nil, fetchError: (any Error)? = nil) {
+        self.events = events
+        self.email = email
+        self.fetchError = fetchError
+    }
 
     // Protocol requirement is async (live client hits the network).
     // swiftlint:disable:next async_without_await
@@ -302,6 +425,7 @@ private final class StubGoogleOAuth: GoogleOAuthPerforming, @unchecked Sendable 
     var refreshError: GoogleOAuthError?
     var revokeCount = 0
     var lastRevoked: GoogleOAuthToken?
+    var onRevoke: (() async throws -> Void)?
 
     init(
         authorizeToken: GoogleOAuthToken? = nil,
@@ -331,10 +455,10 @@ private final class StubGoogleOAuth: GoogleOAuthPerforming, @unchecked Sendable 
         return token
     }
 
-    // swiftlint:disable:next async_without_await
     func revoke(_ token: GoogleOAuthToken) async {
         revokeCount += 1
         lastRevoked = token
+        try? await onRevoke?()
     }
 }
 
