@@ -14,6 +14,7 @@ enum GoogleOAuthConfig {
     // Known-constant Google endpoints; `URL(string:)` cannot fail on these.
     static let authorizationEndpoint = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
+    static let revokeEndpoint = URL(string: "https://oauth2.googleapis.com/revoke")!
     static let calendarListEndpoint = URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")!
     static let eventsEndpoint = URL(string: "https://www.googleapis.com/calendar/v3/calendars")!
 

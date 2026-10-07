@@ -89,8 +89,7 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200 ... 299).contains(status) else {
-            let text = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-            throw GoogleOAuthError.server(text)
+            throw GoogleOAuthError.fromHTTP(status: status, data: data)
         }
         return data
     }
@@ -161,12 +160,7 @@ private struct EventTime {
 
     var dayStart: Date? {
         guard let date else { return nil }
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: date)
+        return GoogleCalendarAPI.parseAllDay(date)
     }
 }
 
@@ -205,5 +199,24 @@ extension GoogleCalendarAPI {
         let basic = ISO8601DateFormatter()
         basic.formatOptions = [.withInternetDateTime]
         return basic.date(from: raw)
+    }
+
+    /// Google all-day `start.date` / `end.date` values are calendar dates, not
+    /// GMT midnights. Parse as local `startOfDay` so a holiday does not shift
+    /// into the previous evening in US timezones.
+    static func parseAllDay(_ raw: String, calendar: Calendar = .current) -> Date? {
+        let parts = raw.split(separator: "-")
+        guard parts.count == 3,
+              let year = Int(parts[0]),
+              let month = Int(parts[1]),
+              let day = Int(parts[2]) else { return nil }
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = year
+        components.month = month
+        components.day = day
+        guard let date = calendar.date(from: components) else { return nil }
+        return calendar.startOfDay(for: date)
     }
 }

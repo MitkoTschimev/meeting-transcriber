@@ -227,6 +227,9 @@ final class HelpBadgeTests: XCTestCase {
         XCTAssertFalse(SettingsHelp.echoDedup.isEmpty)
         XCTAssertFalse(SettingsHelp.echoCancellation.isEmpty)
         XCTAssertFalse(SettingsHelp.silentTrackWatchdog.isEmpty)
+        XCTAssertFalse(SettingsHelp.appleCalendar.isEmpty)
+        XCTAssertFalse(SettingsHelp.googleCalendar.isEmpty)
+        XCTAssertTrue(SettingsHelp.googleCalendar.contains("http://127.0.0.1"))
     }
 
     // MARK: - Adoption in AudioSettingsView (issue #505)

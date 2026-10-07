@@ -157,3 +157,13 @@ final class LoopbackRedirectServer: @unchecked Sendable {
         return "<!DOCTYPE html><html><body><p>\(message)</p></body></html>"
     }
 }
+
+/// Loopback OAuth redirect used by `GoogleOAuthClient`. Tests inject a stub so
+/// authorize never binds a port or waits on Safari.
+protocol OAuthRedirectListening: Sendable {
+    var redirectURI: String { get }
+    func waitForCallback(timeout: TimeInterval) async throws -> LoopbackRedirectServer.Callback
+    func stop()
+}
+
+extension LoopbackRedirectServer: OAuthRedirectListening {}

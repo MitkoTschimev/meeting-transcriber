@@ -61,8 +61,23 @@ enum GoogleOAuthError: Error, Equatable, LocalizedError {
     case stateMismatch
     case timeout
     case noCode
+    case keychainSaveFailed
+    case unauthorized
     case tokenExchangeFailed(String)
     case server(String)
+
+    var isAuthFailure: Bool {
+        switch self {
+        case .unauthorized:
+            true
+
+        case let .tokenExchangeFailed(message), let .server(message):
+            message.contains("invalid_grant")
+
+        default:
+            false
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -81,8 +96,22 @@ enum GoogleOAuthError: Error, Equatable, LocalizedError {
         case .noCode:
             "Google Calendar did not return an authorization code."
 
+        case .keychainSaveFailed:
+            "Could not store the Google Calendar token in the Keychain. Connect again."
+
+        case .unauthorized:
+            "Google Calendar sign-in expired. Connect again in Settings."
+
         case let .tokenExchangeFailed(message), let .server(message):
             message
         }
+    }
+
+    static func fromHTTP(status: Int, data: Data, tokenExchange: Bool = false) -> Self {
+        let text = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+        if status == 401 || text.contains("invalid_grant") {
+            return .unauthorized
+        }
+        return tokenExchange ? .tokenExchangeFailed(text) : .server(text)
     }
 }

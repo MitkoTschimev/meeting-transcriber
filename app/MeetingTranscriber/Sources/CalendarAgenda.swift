@@ -21,21 +21,30 @@ enum CalendarAgenda {
         return order.compactMap { chosen[$0] }
     }
 
+    /// Events still active in today's window, without the agenda cap. Used for
+    /// live title enrichment so a long all-day list cannot hide the current meeting.
+    static func inWindow(
+        _ events: [CalendarEvent],
+        from now: Date,
+        calendar: Calendar = .current,
+    ) -> [CalendarEvent] {
+        let startOfDay = calendar.startOfDay(for: now)
+        let end = calendar.date(byAdding: .day, value: 2, to: startOfDay) ?? now.addingTimeInterval(48 * 3600)
+        return events
+            .filter { $0.end >= now && $0.start < end }
+            .sorted { lhs, rhs in
+                if lhs.start != rhs.start { return lhs.start < rhs.start }
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+    }
+
     static func upcoming(
         _ events: [CalendarEvent],
         from now: Date,
         calendar: Calendar = .current,
         limit: Int = 12,
     ) -> [CalendarEvent] {
-        let startOfDay = calendar.startOfDay(for: now)
-        let end = calendar.date(byAdding: .day, value: 2, to: startOfDay) ?? now.addingTimeInterval(48 * 3600)
-        let filtered = events
-            .filter { $0.end >= now && $0.start < end }
-            .sorted { lhs, rhs in
-                if lhs.start != rhs.start { return lhs.start < rhs.start }
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-        return Array(filtered.prefix(limit))
+        Array(inWindow(events, from: now, calendar: calendar).prefix(limit))
     }
 
     private static func dedupKey(_ event: CalendarEvent) -> String {

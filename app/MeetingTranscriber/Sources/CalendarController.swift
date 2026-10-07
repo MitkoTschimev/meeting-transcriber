@@ -11,6 +11,10 @@ private let logger = Logger(subsystem: AppPaths.logSubsystem, category: "Calenda
 @MainActor
 final class CalendarController {
     private(set) var upcoming: [CalendarEvent] = []
+    /// Untrimmed active-window events used for live title enrichment. `upcoming`
+    /// is capped at 12 for the agenda UI; all-day rows must not hide the meeting
+    /// that is happening now.
+    private var overlapEvents: [CalendarEvent] = []
     private(set) var appleStatus: CalendarAccessStatus
     private(set) var googleEmail: String?
     private(set) var lastError: String?
@@ -21,7 +25,7 @@ final class CalendarController {
     let tokenStore: CalendarTokenStore
     private let apple: any AppleCalendarAccessing
     private let googleAPI: any GoogleCalendarFetching
-    private let oauth: GoogleOAuthClient
+    private let oauth: any GoogleOAuthPerforming
     private let nowProvider: () -> Date
     private var refreshTask: Task<Void, Never>?
 
@@ -34,7 +38,7 @@ final class CalendarController {
         tokenStore: CalendarTokenStore = CalendarTokenStore(),
         apple: any AppleCalendarAccessing = EventKitAppleCalendarAccess(),
         googleAPI: any GoogleCalendarFetching = GoogleCalendarAPI(),
-        oauth: GoogleOAuthClient? = nil,
+        oauth: (any GoogleOAuthPerforming)? = nil,
         now: @escaping () -> Date = Date.init,
     ) {
         self.settings = settings
@@ -52,7 +56,7 @@ final class CalendarController {
     }
 
     func eventOverlapping(at date: Date) -> CalendarEvent? {
-        CalendarTitlePolicy.overlappingEvent(in: upcoming, at: date)
+        CalendarTitlePolicy.overlappingEvent(in: overlapEvents, at: date)
     }
 
     func appleToggled(_ enabled: Bool) {
@@ -96,12 +100,15 @@ final class CalendarController {
         }
     }
 
-    func disconnectGoogle() {
+    func disconnectGoogle() async {
+        if let token = tokenStore.read() {
+            await oauth.revoke(token)
+        }
         tokenStore.delete()
         googleEmail = nil
         settings.googleCalendarEnabled = false
         lastError = nil
-        Task { await refresh() }
+        await refresh()
     }
 
     func refresh() async {
@@ -131,7 +138,9 @@ final class CalendarController {
                 logger.error("google_calendar_fetch_failed \(error.localizedDescription, privacy: .public)")
             }
         }
-        upcoming = CalendarAgenda.upcoming(CalendarAgenda.merge(groups), from: instant)
+        let merged = CalendarAgenda.merge(groups)
+        overlapEvents = CalendarAgenda.inWindow(merged, from: instant)
+        upcoming = CalendarAgenda.upcoming(merged, from: instant)
     }
 
     func startPeriodicRefresh() {
@@ -154,11 +163,31 @@ final class CalendarController {
     private func googleEvents(from: Date, to: Date) async throws -> [CalendarEvent] {
         guard var token = tokenStore.read() else { return [] }
         let clientID = GoogleOAuthConfig.clientID(settingsValue: settings.googleOAuthClientID)
-        if token.isExpired(at: nowProvider()), !clientID.isEmpty {
-            token = try await oauth.refresh(token, clientID: clientID)
-            try tokenStore.save(token)
-            googleEmail = token.email
+        if token.isExpired(at: nowProvider()) {
+            guard !clientID.isEmpty else {
+                throw GoogleOAuthError.missingClientID
+            }
+            do {
+                token = try await oauth.refresh(token, clientID: clientID)
+                try tokenStore.save(token)
+                googleEmail = token.email
+            } catch {
+                handleGoogleAuthFailure(error)
+                throw error
+            }
         }
-        return try await googleAPI.fetchEvents(accessToken: token.accessToken, from: from, to: to)
+        do {
+            return try await googleAPI.fetchEvents(accessToken: token.accessToken, from: from, to: to)
+        } catch {
+            handleGoogleAuthFailure(error)
+            throw error
+        }
+    }
+
+    private func handleGoogleAuthFailure(_ error: any Error) {
+        guard let oauthError = error as? GoogleOAuthError, oauthError.isAuthFailure else { return }
+        tokenStore.delete()
+        googleEmail = nil
+        settings.googleCalendarEnabled = false
     }
 }

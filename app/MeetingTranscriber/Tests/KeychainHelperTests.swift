@@ -14,7 +14,7 @@ final class KeychainHelperTests: XCTestCase {
     // MARK: - Save: add path (item doesn't exist)
 
     func testSaveAddsNewItem() {
-        KeychainHelper.save(key: testKey, value: "secret123")
+        XCTAssertTrue(KeychainHelper.save(key: testKey, value: "secret123"))
         XCTAssertEqual(KeychainHelper.read(key: testKey), "secret123")
     }
 

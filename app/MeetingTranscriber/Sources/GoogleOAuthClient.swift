@@ -2,12 +2,18 @@ import Foundation
 
 /// Google Desktop OAuth (PKCE + loopback redirect). Browser is opened via an
 /// injected opener so tests never launch Safari.
-struct GoogleOAuthClient: Sendable {
+protocol GoogleOAuthPerforming: Sendable {
+    func authorize(clientID: String) async throws -> GoogleOAuthToken
+    func refresh(_ token: GoogleOAuthToken, clientID: String) async throws -> GoogleOAuthToken
+    func revoke(_ token: GoogleOAuthToken) async
+}
+
+struct GoogleOAuthClient: GoogleOAuthPerforming, Sendable {
     var session: URLSession
     var openURL: @Sendable (URL) -> Void
     var makePKCE: @Sendable () -> PKCE
     var makeState: @Sendable () -> String
-    var startLoopback: @Sendable () throws -> LoopbackRedirectServer
+    var startLoopback: @Sendable () throws -> any OAuthRedirectListening
     var timeout: TimeInterval
 
     init(
@@ -15,7 +21,9 @@ struct GoogleOAuthClient: Sendable {
         session: URLSession = .shared,
         makePKCE: @escaping @Sendable () -> PKCE = { PKCE.generate() },
         makeState: @escaping @Sendable () -> String = { PKCE.generate().verifier },
-        startLoopback: @escaping @Sendable () throws -> LoopbackRedirectServer = { try LoopbackRedirectServer.start() },
+        startLoopback: @escaping @Sendable () throws -> any OAuthRedirectListening = {
+            try LoopbackRedirectServer.start()
+        },
         timeout: TimeInterval = 180,
     ) {
         self.session = session
@@ -62,14 +70,30 @@ struct GoogleOAuthClient: Sendable {
     }
 
     func refresh(_ token: GoogleOAuthToken, clientID: String) async throws -> GoogleOAuthToken {
-        let data = try await postForm([
-            "refresh_token": token.refreshToken,
-            "client_id": clientID,
-            "grant_type": "refresh_token",
-        ])
+        let data = try await postForm(
+            [
+                "refresh_token": token.refreshToken,
+                "client_id": clientID,
+                "grant_type": "refresh_token",
+            ],
+            to: GoogleOAuthConfig.tokenEndpoint,
+            tokenExchange: true,
+        )
         var refreshed = try GoogleOAuthToken.parse(data, existingRefresh: token.refreshToken)
         refreshed.email = token.email
         return refreshed
+    }
+
+    /// Best-effort revoke at Google's token revocation endpoint. Disconnect
+    /// still deletes the local Keychain item if this fails.
+    func revoke(_ token: GoogleOAuthToken) async {
+        let value = token.refreshToken.isEmpty ? token.accessToken : token.refreshToken
+        guard !value.isEmpty else { return }
+        _ = try? await postForm(
+            ["token": value],
+            to: GoogleOAuthConfig.revokeEndpoint,
+            tokenExchange: false,
+        )
     }
 
     func authorizationURL(clientID: String, redirectURI: String, state: String, challenge: String) -> URL? {
@@ -101,26 +125,19 @@ struct GoogleOAuthClient: Sendable {
             "grant_type": "authorization_code",
             "code_verifier": verifier,
         ]
-        let data = try await postForm(body)
+        let data = try await postForm(body, to: GoogleOAuthConfig.tokenEndpoint, tokenExchange: true)
         return try GoogleOAuthToken.parse(data)
     }
 
-    private func postForm(_ fields: [String: String]) async throws -> Data {
-        var request = URLRequest(url: GoogleOAuthConfig.tokenEndpoint)
+    private func postForm(_ fields: [String: String], to url: URL, tokenExchange: Bool) async throws -> Data {
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = fields
-            .map { key, value in
-                let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
-                return "\(key)=\(encoded)"
-            }
-            .joined(separator: "&")
-            .data(using: .utf8)
+        request.httpBody = FormURLEncoder.encode(fields)
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200 ... 299).contains(status) else {
-            let text = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-            throw GoogleOAuthError.tokenExchangeFailed(text)
+            throw GoogleOAuthError.fromHTTP(status: status, data: data, tokenExchange: tokenExchange)
         }
         return data
     }

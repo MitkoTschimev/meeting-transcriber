@@ -16,9 +16,10 @@ enum KeychainHelper {
         ]
     }
 
-    /// Store or update a value in the Keychain.
-    static func save(key: String, value: String) {
-        guard let data = value.data(using: .utf8) else { return }
+    /// Store or update a value in the Keychain. `false` if the write did not land.
+    @discardableResult
+    static func save(key: String, value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
         var query = baseQuery(for: key)
         query[kSecValueData as String] = data
 
@@ -28,10 +29,15 @@ enum KeychainHelper {
             let updateStatus = SecItemUpdate(baseQuery(for: key) as CFDictionary, update as CFDictionary)
             if updateStatus != errSecSuccess {
                 logger.error("Failed to update \(key): \(updateStatus)")
+                return false
             }
-        } else if addStatus != errSecSuccess {
-            logger.error("Failed to save \(key): \(addStatus)")
+            return true
         }
+        if addStatus != errSecSuccess {
+            logger.error("Failed to save \(key): \(addStatus)")
+            return false
+        }
+        return true
     }
 
     /// Read a value from the Keychain. Returns `nil` if not found.

@@ -76,8 +76,10 @@ enum SettingsHelp {
         """
         Connects a Google account directly with OAuth (not through Calendar.app). \
         Tokens are stored in the Keychain. Create a Desktop OAuth client ID in \
-        Google Cloud and paste it here, then click Connect. The app only requests \
-        read-only calendar access.
+        Google Cloud Console and register the loopback redirect URI \
+        http://127.0.0.1 (any port; the app binds one at connect time). Paste \
+        the client ID here, then click Connect. The app only requests read-only \
+        calendar access.
         """
 
     static let asymmetricSilenceWarning =

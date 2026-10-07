@@ -3,7 +3,10 @@ import XCTest
 
 final class GoogleOAuthTokenTests: XCTestCase {
     func testParseAccessAndRefresh() throws {
-        let json = Data(#"{"access_token":"ya29.a","expires_in":3600,"refresh_token":"1//r","token_type":"Bearer","scope":"https://www.googleapis.com/auth/calendar.readonly"}"#.utf8)
+        let json = Data(
+            #"{"access_token":"ya29.a","expires_in":3600,"refresh_token":"1//r","token_type":"Bearer","scope":"https://www.googleapis.com/auth/calendar.readonly"}"#
+                .utf8,
+        )
         let now = Date(timeIntervalSince1970: 1000)
         let token = try GoogleOAuthToken.parse(json, at: now)
         XCTAssertEqual(token.accessToken, "ya29.a")
@@ -47,5 +50,16 @@ final class GoogleOAuthTokenTests: XCTestCase {
             "from-plist",
         )
         XCTAssertEqual(GoogleOAuthConfig.clientID(settingsValue: "", environment: [:], bundled: nil), "")
+    }
+
+    func testFromHTTPMapsInvalidGrantAnd401() {
+        XCTAssertEqual(
+            GoogleOAuthError.fromHTTP(status: 400, data: Data(#"{"error":"invalid_grant"}"#.utf8), tokenExchange: true),
+            .unauthorized,
+        )
+        XCTAssertEqual(GoogleOAuthError.fromHTTP(status: 401, data: Data("nope".utf8)), .unauthorized)
+        XCTAssertTrue(GoogleOAuthError.unauthorized.isAuthFailure)
+        XCTAssertTrue(GoogleOAuthError.tokenExchangeFailed("invalid_grant from Google").isAuthFailure)
+        XCTAssertFalse(GoogleOAuthError.missingClientID.isAuthFailure)
     }
 }

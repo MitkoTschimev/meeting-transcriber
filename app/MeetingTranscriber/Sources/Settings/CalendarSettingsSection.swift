@@ -61,7 +61,7 @@ struct CalendarSettingsSection: View {
                     .accessibilityIdentifier(A11yID.googleOAuthClientIDField)
                 if calendar?.googleConnected == true {
                     Button("Disconnect") {
-                        calendar?.disconnectGoogle()
+                        Task { await calendar?.disconnectGoogle() }
                     }
                     .accessibilityIdentifier(A11yID.googleCalendarDisconnect)
                 } else {

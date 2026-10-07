@@ -44,4 +44,31 @@ final class CalendarAgendaTests: XCTestCase {
         let upcoming = CalendarAgenda.upcoming([past, next], from: now, limit: 1)
         XCTAssertEqual(upcoming.map(\.id), ["next"])
     }
+
+    func testInWindowKeepsEventsBeyondUpcomingLimit() {
+        let dayStart = Calendar.current.startOfDay(for: now)
+        var events: [CalendarEvent] = (0 ..< 12).map { index in
+            CalendarEvent(
+                id: "allday-\(index)",
+                title: "Holiday \(index)",
+                start: dayStart,
+                end: dayStart.addingTimeInterval(86400),
+                source: .apple,
+                isAllDay: true,
+            )
+        }
+        events.append(CalendarEvent(
+            id: "live",
+            title: "Live standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+        ))
+        let upcoming = CalendarAgenda.upcoming(events, from: now, limit: 12)
+        XCTAssertEqual(upcoming.count, 12)
+        XCTAssertFalse(upcoming.contains { $0.id == "live" })
+        let window = CalendarAgenda.inWindow(events, from: now)
+        XCTAssertTrue(window.contains { $0.id == "live" })
+        XCTAssertEqual(CalendarTitlePolicy.overlappingEvent(in: window, at: now)?.id, "live")
+    }
 }
