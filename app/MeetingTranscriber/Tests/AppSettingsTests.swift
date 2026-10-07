@@ -67,6 +67,9 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.liveCaptionsOverlayEnabled)
         XCTAssertEqual(settings.liveCaptionsSize, .medium)
         XCTAssertEqual(settings.protocolStyle, .actionItems)
+        XCTAssertFalse(settings.appleCalendarEnabled)
+        XCTAssertFalse(settings.googleCalendarEnabled)
+        XCTAssertEqual(settings.googleOAuthClientID, "")
     }
 
     func test_activeEngineLanguageOrNil_followsWhisperKitLanguage() {

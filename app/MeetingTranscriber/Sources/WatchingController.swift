@@ -51,6 +51,7 @@ final class WatchingController {
     private let permissions: PermissionsController
     let liveTranscription: LiveTranscriptionCoordinator
     let meetingNotes: MeetingNotesSession
+    let calendarLookup: (Date) -> CalendarEvent?
 
     /// Microphone-access gate. Injectable so tests skip the real TCC prompt; the
     /// return value is intentionally ignored (the loop is created regardless, and
@@ -140,6 +141,7 @@ final class WatchingController {
         makeDetector: (() -> any MeetingDetecting)? = nil,
         makeRecorder: @escaping @MainActor () -> any RecordingProvider = { DualSourceRecorder() },
         meetingNotes: MeetingNotesSession = MeetingNotesSession(),
+        calendarLookup: @escaping (Date) -> CalendarEvent? = { _ in nil },
     ) {
         self.settings = settings
         self.notifier = notifier
@@ -148,6 +150,7 @@ final class WatchingController {
         self.permissions = permissions
         self.liveTranscription = liveTranscription
         self.meetingNotes = meetingNotes
+        self.calendarLookup = calendarLookup
         self.ensureMicAccess = ensureMicAccess
         self.requestScreenRecording = requestScreenRecording
         self.requestAccessibility = requestAccessibility
@@ -258,6 +261,7 @@ final class WatchingController {
                     },
                     notifier: notifier,
                     denyListStore: ConsentDenyListStore(settings: settings),
+                    calendarLookup: calendarLookup,
                 )
 
                 attachStateChangeHandler(to: loop, notifyOnRecording: true)
@@ -482,6 +486,7 @@ final class WatchingController {
                 .production(parent: pipeline.outputDirectory.resolve())
             },
             notifier: notifier,
+            calendarLookup: calendarLookup,
         )
         watchLoop = loop
 
@@ -581,19 +586,5 @@ final class WatchingController {
                 self?.channelHealth.stop()
             }
         }
-    }
-
-    /// Open (or retitle) the notes session for the recording that just started
-    /// and bring the notes window forward. Title comes from the loop's published
-    /// meeting identity so the window names the same meeting the job will.
-    private func beginMeetingNotes(from loop: WatchLoop?) {
-        if let manual = loop?.manualRecordingInfo {
-            meetingNotes.begin(title: manual.title, appName: manual.appName)
-        } else if let meeting = loop?.currentMeeting {
-            meetingNotes.begin(title: meeting.windowTitle, appName: meeting.pattern.appName)
-        } else {
-            meetingNotes.begin(title: "Meeting", appName: "")
-        }
-        NotificationCenter.default.post(name: .showMeetingNotes, object: nil)
     }
 }

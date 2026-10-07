@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import AudioTapLib
 import AVFoundation
+import EventKit
 import os.log
 import SwiftUI
 
@@ -11,6 +12,7 @@ private enum PrivacyPane: String {
     case screenCapture = "Privacy_ScreenCapture"
     case microphone = "Privacy_Microphone"
     case accessibility = "Privacy_Accessibility"
+    case calendars = "Privacy_Calendars"
 
     var url: String {
         "x-apple.systempreferences:com.apple.preference.security?\(rawValue)"
@@ -23,6 +25,7 @@ struct AdvancedSettingsView: View {
     @State private var micPermission: AVAuthorizationStatus = .notDetermined
     @State private var screenRecordingOK = false
     @State private var accessibilityOK = false
+    @State private var calendarOK = false
     @State private var lastExportFile: String?
     @State private var lastExportError: String?
     /// True while a `DiagnosticExporter.export` call is running off-main.
@@ -33,38 +36,7 @@ struct AdvancedSettingsView: View {
     var body: some View {
         // swiftlint:disable:next closure_body_length
         Form {
-            Section("Permissions") {
-                PermissionRow(
-                    label: "Screen Recording",
-                    detail: Self.screenRecordingDetail,
-                    granted: screenRecordingOK,
-                    help: "\(SystemSettingsPaths.screenRecording) → enable Meeting Transcriber",
-                    settingsURL: PrivacyPane.screenCapture.url,
-                )
-                PermissionRow(
-                    label: "Microphone",
-                    detail: micPermission == .authorized ? "Granted"
-                        : micPermission == .notDetermined ? "Will prompt on first recording"
-                        : "Denied — click to open Settings",
-                    granted: micPermission == .authorized,
-                    warning: micPermission == .notDetermined,
-                    help: "System Settings → Privacy & Security → Microphone → enable Meeting Transcriber",
-                    settingsURL: PrivacyPane.microphone.url,
-                )
-                PermissionRow(
-                    label: "Accessibility",
-                    detail: "Optional — enables mute detection and meeting naming",
-                    granted: accessibilityOK,
-                    optional: true,
-                    help: "System Settings → Privacy & Security → Accessibility → enable Meeting Transcriber",
-                    settingsURL: PrivacyPane.accessibility.url,
-                )
-
-                Button("Refresh") {
-                    refreshPermissions()
-                }
-                .font(.caption)
-            }
+            permissionsSection
 
             // swiftlint:disable:next closure_body_length
             Section("Diagnostics") {
@@ -129,6 +101,52 @@ struct AdvancedSettingsView: View {
         .onAppear { refreshPermissions() }
     }
 
+    private var permissionsSection: some View {
+        // swiftlint:disable:next closure_body_length
+        Section("Permissions") {
+            PermissionRow(
+                label: "Screen Recording",
+                detail: Self.screenRecordingDetail,
+                granted: screenRecordingOK,
+                help: "\(SystemSettingsPaths.screenRecording) → enable Meeting Transcriber",
+                settingsURL: PrivacyPane.screenCapture.url,
+            )
+            PermissionRow(
+                label: "Microphone",
+                detail: micPermission == .authorized ? "Granted"
+                    : micPermission == .notDetermined ? "Will prompt on first recording"
+                    : "Denied — click to open Settings",
+                granted: micPermission == .authorized,
+                warning: micPermission == .notDetermined,
+                help: "System Settings → Privacy & Security → Microphone → enable Meeting Transcriber",
+                settingsURL: PrivacyPane.microphone.url,
+            )
+            PermissionRow(
+                label: "Accessibility",
+                detail: "Optional — enables mute detection and meeting naming",
+                granted: accessibilityOK,
+                optional: true,
+                help: "System Settings → Privacy & Security → Accessibility → enable Meeting Transcriber",
+                settingsURL: PrivacyPane.accessibility.url,
+            )
+            PermissionRow(
+                label: "Calendars",
+                detail: calendarOK
+                    ? "Granted — upcoming meetings can name recordings"
+                    : "Optional — enable Apple Calendar in Settings → General",
+                granted: calendarOK,
+                optional: true,
+                help: "System Settings → Privacy & Security → Calendars → enable Meeting Transcriber",
+                settingsURL: PrivacyPane.calendars.url,
+            )
+
+            Button("Refresh") {
+                refreshPermissions()
+            }
+            .font(.caption)
+        }
+    }
+
     #if APPSTORE
         private static let screenRecordingDetail = "Required for app audio capture"
     #else
@@ -139,6 +157,9 @@ struct AdvancedSettingsView: View {
         micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
         screenRecordingOK = Permissions.checkScreenRecording()
         accessibilityOK = AXIsProcessTrusted()
+        calendarOK = AppleCalendarAuthorization.status(
+            from: EKEventStore.authorizationStatus(for: .event),
+        ) == .granted
     }
 
     private func exportDiagnostics() {

@@ -32,5 +32,9 @@
     <string>Meeting Transcriber needs Screen Recording permission to detect active meetings by reading window titles.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Meeting Transcriber uses Accessibility to detect mute state and read meeting participants.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Meeting Transcriber reads your calendars to name recordings from upcoming meetings and show today’s agenda.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Meeting Transcriber reads your calendars to name recordings from upcoming meetings and show today’s agenda.</string>
 </dict>
 </plist>

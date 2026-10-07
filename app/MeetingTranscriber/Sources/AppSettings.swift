@@ -173,6 +173,26 @@ final class AppSettings {
         didSet { defaults.set(watchCustomApps, forKey: "watchCustomApps") }
     }
 
+    // MARK: - Calendars
+
+    /// EventKit / macOS Calendar. Off by default — additive opt-in so existing
+    /// installs are not prompted for Calendar access until the user enables it.
+    var appleCalendarEnabled: Bool {
+        didSet { defaults.set(appleCalendarEnabled, forKey: "appleCalendarEnabled") }
+    }
+
+    /// When true and a Google OAuth token is stored, fetch Google Calendar
+    /// events. Connect stores the token; this toggle pauses fetches without
+    /// disconnecting.
+    var googleCalendarEnabled: Bool {
+        didSet { defaults.set(googleCalendarEnabled, forKey: "googleCalendarEnabled") }
+    }
+
+    /// Google Cloud Desktop OAuth client ID. Not a secret (public PKCE client).
+    var googleOAuthClientID: String {
+        didSet { defaults.set(googleOAuthClientID, forKey: "googleOAuthClientID") }
+    }
+
     /// Auto-start watching on app launch.
     var autoWatch: Bool {
         didSet { defaults.set(autoWatch, forKey: "autoWatch") }
@@ -590,6 +610,9 @@ final class AppSettings {
         watchWhatsApp = defaults.object(forKey: "watchWhatsApp") as? Bool ?? false
         watchCustomApps = defaults.stringArray(forKey: "watchCustomApps") ?? []
         autoWatch = defaults.object(forKey: "autoWatch") as? Bool ?? false
+        appleCalendarEnabled = defaults.object(forKey: "appleCalendarEnabled") as? Bool ?? false
+        googleCalendarEnabled = defaults.object(forKey: "googleCalendarEnabled") as? Bool ?? false
+        googleOAuthClientID = defaults.string(forKey: "googleOAuthClientID") ?? ""
 
         pollInterval = defaults.object(forKey: "pollInterval") as? Double ?? 3.0
         endGrace = defaults.object(forKey: "endGrace") as? Double ?? 15.0

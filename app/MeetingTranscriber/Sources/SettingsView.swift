@@ -25,6 +25,7 @@ struct SettingsView: View {
     /// True when the pipeline is processing a job — soft hint only.
     var pipelineBusy: Bool = false
     var onSpeakerMutate: (() -> Void)?
+    var calendar: CalendarController?
 
     @State private var selection: SettingsTab = .general
 
@@ -61,6 +62,7 @@ struct SettingsView: View {
             GeneralSettingsView(
                 settings: settings,
                 notificationVisibility: notificationVisibility,
+                calendar: calendar,
             )
 
         case .audio:

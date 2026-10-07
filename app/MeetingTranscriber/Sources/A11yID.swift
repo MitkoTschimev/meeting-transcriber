@@ -142,4 +142,13 @@ enum A11yID {
     static let meetingNotesThoughts = "meetingNotesThoughts"
     static let meetingNotesSpeakerChrome = "meetingNotesSpeakerChrome"
     static let meetingNotesAskBar = "meetingNotesAskBar"
+    static let meetingNotesAgenda = "meetingNotesAgenda"
+
+    // Calendar connections (Settings → General).
+    static let appleCalendarToggle = "appleCalendarToggle"
+    static let googleCalendarToggle = "googleCalendarToggle"
+    static let googleCalendarConnect = "googleCalendarConnect"
+    static let googleCalendarDisconnect = "googleCalendarDisconnect"
+    static let googleOAuthClientIDField = "googleOAuthClientIDField"
+    static let calendarError = "calendarError"
 }
