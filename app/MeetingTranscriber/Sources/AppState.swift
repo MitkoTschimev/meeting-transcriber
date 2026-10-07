@@ -168,6 +168,9 @@ final class AppState {
         thoughtsStore: MeetingThoughtsStore(directory: AppPaths.thoughtsDir),
     )
 
+    /// Apple + Google calendar connections and today's upcoming events.
+    let calendar: CalendarController
+
     /// Live-transcription controller lifecycle (lazy creation against the active
     /// engine, pre-warm, per-recording sink installation), extracted into its own
     /// coordinator. `WatchingController`'s recorder factory delegates sink
@@ -249,6 +252,7 @@ final class AppState {
             debounceSeconds: { [settings] in settings.asymmetricSilenceWarningSeconds },
             indicatorEnabled: { [settings] in settings.perChannelIndicatorEnabled },
         )
+        self.calendar = CalendarController(settings: settings)
         self.liveTranscription = LiveTranscriptionCoordinator(
             captions: liveCaptions,
             liveEnabled: { [settings] in settings.liveTranscriptionEnabled },
@@ -265,7 +269,7 @@ final class AppState {
             permissions: permissions,
             liveTranscription: liveTranscription,
             meetingNotes: meetingNotes,
-        )
+        ) { [weak calendar] date in calendar?.eventOverlapping(at: date) }
 
         liveCaptions.notes = meetingNotes
 
@@ -565,7 +569,7 @@ final class AppState {
             loop.currentMeeting.map { meeting in
                 MeetingInfo(
                     app: meeting.pattern.appName,
-                    title: meeting.windowTitle,
+                    title: loop.recordingTitle ?? meeting.windowTitle,
                     pid: Int(meeting.windowPID),
                 )
             }

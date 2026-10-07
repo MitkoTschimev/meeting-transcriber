@@ -11,6 +11,9 @@ struct WatchLoopState: Equatable {
     var lastError: String?
     var detail: String
     var manualRecordingInfo: ManualRecordingInfo?
+    /// Title used for the notes window, menu, and pipeline job after calendar
+    /// enrichment. Nil when nothing is recording.
+    var recordingTitle: String?
 
     /// Initial state at `WatchLoop` construction. Matches the field
     /// defaults declared on the class — see `WatchLoop.init`.
@@ -20,6 +23,7 @@ struct WatchLoopState: Equatable {
         lastError: nil,
         detail: "",
         manualRecordingInfo: nil,
+        recordingTitle: nil,
     )
 }
 
@@ -60,6 +64,7 @@ extension WatchLoop {
             lastError: lastError,
             detail: detail,
             manualRecordingInfo: manualRecordingInfo,
+            recordingTitle: recordingTitle,
         )
     }
 }

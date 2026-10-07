@@ -11,6 +11,7 @@ struct GeneralSettingsView: View {
     /// consent prompt is a notification), and nothing else in the app can say so
     /// without using the channel that is broken.
     var notificationVisibility: NotificationVisibility?
+    var calendar: CalendarController?
 
     @State private var addAppRefusals: [String] = []
 
@@ -82,6 +83,8 @@ struct GeneralSettingsView: View {
                     Text("seconds").foregroundStyle(.secondary)
                 }
             }
+
+            CalendarSettingsSection(settings: settings, calendar: calendar)
         }
         .formStyle(.grouped)
     }

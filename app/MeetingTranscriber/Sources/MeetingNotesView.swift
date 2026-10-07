@@ -34,6 +34,7 @@ struct MeetingNotesView: View {
     @Bindable var settings: AppSettings
     @Bindable var queue: PipelineQueue
     let liveTranscriptionEnabled: Bool
+    var upcomingEvents: [CalendarEvent] = []
 
     @State private var tab: MeetingNotesTab
     @State private var userPickedTab: Bool
@@ -43,12 +44,14 @@ struct MeetingNotesView: View {
         settings: AppSettings,
         queue: PipelineQueue,
         liveTranscriptionEnabled: Bool,
+        upcomingEvents: [CalendarEvent] = [],
         initialTab: MeetingNotesTab = .transcript,
     ) {
         self.session = session
         self.settings = settings
         self.queue = queue
         self.liveTranscriptionEnabled = liveTranscriptionEnabled
+        self.upcomingEvents = upcomingEvents
         _tab = State(initialValue: initialTab)
         _userPickedTab = State(initialValue: initialTab != .transcript)
     }
@@ -130,11 +133,27 @@ struct MeetingNotesView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            if session.phase == .idle, !upcomingEvents.isEmpty {
+                agenda
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 28)
         .padding(.top, 24)
         .padding(.bottom, 12)
+    }
+
+    private var agenda: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Today's meetings")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            ForEach(upcomingEvents.prefix(6)) { event in
+                CalendarEventRow(event: event, showsSource: true)
+            }
+        }
+        .padding(.top, 8)
+        .accessibilityIdentifier(A11yID.meetingNotesAgenda)
     }
 
     private var tabBar: some View {

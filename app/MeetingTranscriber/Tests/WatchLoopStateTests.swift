@@ -18,6 +18,7 @@ final class WatchLoopStateTests: XCTestCase {
         XCTAssertNil(WatchLoopState.initial.lastError)
         XCTAssertEqual(WatchLoopState.initial.detail, "")
         XCTAssertNil(WatchLoopState.initial.manualRecordingInfo)
+        XCTAssertNil(WatchLoopState.initial.recordingTitle)
     }
 
     func testEqualityRequiresAllFieldsToMatch() {

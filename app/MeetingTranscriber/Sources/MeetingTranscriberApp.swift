@@ -203,6 +203,9 @@ struct MeetingTranscriberApp: App {
         .task {
             await appState.permissions.check()
         }
+        .task {
+            appState.calendar.startPeriodicRefresh()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Re-check permissions when the user returns to the app (e.g. from System
             // Settings after toggling a permission). Debounced so rapid Cmd-Tab cycles
@@ -277,6 +280,7 @@ struct MeetingTranscriberApp: App {
                 namingDialogActive: appState.pipeline.queue.pendingSpeakerNaming != nil,
                 pipelineBusy: appState.pipeline.queue.isProcessing,
                 onSpeakerMutate: appState.pipeline.queue.refreshKnownSpeakerNames,
+                calendar: appState.calendar,
             )
         }
         .windowResizability(.contentSize)
@@ -309,6 +313,7 @@ struct MeetingTranscriberApp: App {
                 settings: appState.settings,
                 queue: appState.pipeline.queue,
                 liveTranscriptionEnabled: appState.settings.liveTranscriptionEnabled,
+                upcomingEvents: appState.calendar.upcoming,
             )
         }
         .defaultSize(width: 720, height: 780)

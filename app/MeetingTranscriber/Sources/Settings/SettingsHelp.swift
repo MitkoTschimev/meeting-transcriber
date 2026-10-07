@@ -64,6 +64,24 @@ enum SettingsHelp {
         a report about a silent app track needs.
         """
 
+    static let appleCalendar =
+        """
+        Uses the macOS Calendar app (EventKit): iCloud, local calendars, and any \
+        Google or Exchange accounts already added there. Turning this on asks macOS \
+        for Calendar access. Upcoming events can fill in a meeting title when a \
+        recording starts, and show today's agenda in Meeting Notes.
+        """
+
+    static let googleCalendar =
+        """
+        Connects a Google account directly with OAuth (not through Calendar.app). \
+        Tokens are stored in the Keychain. Create a Desktop OAuth client ID in \
+        Google Cloud Console and register the loopback redirect URI \
+        http://127.0.0.1 (any port; the app binds one at connect time). Paste \
+        the client ID here, then click Connect. The app only requests read-only \
+        calendar access.
+        """
+
     static let asymmetricSilenceWarning =
         "How long the condition must last before the indicator turns red and, for a channel " +
         "that has stopped delivering, before you are notified. Lower reacts faster to a dead " +

@@ -20,6 +20,9 @@ class WatchLoop {
     private(set) var currentMeeting: DetectedMeeting?
     private(set) var lastError: String?
     private(set) var detail: String = ""
+    /// Calendar-enriched title for the in-flight recording, or the cleaned
+    /// window title when no overlapping event exists.
+    private(set) var recordingTitle: String?
 
     // Manual recording
     private(set) var manualRecordingInfo: ManualRecordingInfo?
@@ -80,6 +83,9 @@ class WatchLoop {
     /// Internal so the consent gate can live in `WatchLoop+Consent.swift`.
     var consentPolicy: BrowserConsentPolicy
     let denyListStore: any ConsentDenyListStoring
+    /// Overlapping calendar event at a recording start. Default is empty so
+    /// existing watch/record tests stay calendar-free.
+    let calendarLookup: (Date) -> CalendarEvent?
 
     /// The app whose consent prompt is currently parked, nil when no question
     /// is open. The answer is awaited in `consentTask` rather than inline, so
@@ -131,6 +137,7 @@ class WatchLoop {
         pidAliveCheck: @escaping (pid_t) -> Bool = { kill($0, 0) == 0 },
         consentPolicy: BrowserConsentPolicy = BrowserConsentPolicy(),
         denyListStore: any ConsentDenyListStoring = InMemoryConsentDenyListStore(),
+        calendarLookup: @escaping (Date) -> CalendarEvent? = { _ in nil },
     ) {
         self.detector = detector
         self.recorderFactory = recorderFactory
@@ -149,6 +156,7 @@ class WatchLoop {
         self.pidAliveCheck = pidAliveCheck
         self.consentPolicy = consentPolicy
         self.denyListStore = denyListStore
+        self.calendarLookup = calendarLookup
     }
 
     nonisolated static var defaultOutputDir: URL {
@@ -187,6 +195,7 @@ class WatchLoop {
         update { next in
             next.phase = .idle
             next.currentMeeting = nil
+            next.recordingTitle = nil
             next.detail = ""
         }
         logger.info("Watch mode stopped")
@@ -248,11 +257,13 @@ class WatchLoop {
         )
 
         let pid = source.appPID
+        let resolved = enrichedTitle(title, appName: appName)
         activeRecorder = recorder
         update { next in
             next.phase = .recording
-            next.manualRecordingInfo = ManualRecordingInfo(pid: pid, appName: appName, title: title)
-            next.detail = "Recording: \(title)"
+            next.manualRecordingInfo = ManualRecordingInfo(pid: pid, appName: appName, title: resolved)
+            next.recordingTitle = resolved
+            next.detail = "Recording: \(resolved)"
         }
 
         manualRecordingTask = Task { [weak self] in
@@ -285,6 +296,7 @@ class WatchLoop {
         update { next in
             next.phase = .idle
             next.manualRecordingInfo = nil
+            next.recordingTitle = nil
             next.detail = ""
             if let failureMessage { next.lastError = failureMessage }
         }
@@ -348,6 +360,7 @@ class WatchLoop {
         if !Task.isCancelled {
             update { next in
                 next.phase = .watching
+                next.recordingTitle = nil
                 next.detail = "Polling for meetings..."
             }
         }
@@ -357,12 +370,13 @@ class WatchLoop {
     // MARK: - Meeting Handling
 
     func handleMeeting(_ meeting: DetectedMeeting) async throws {
-        let title = Self.cleanTitle(meeting.windowTitle)
+        let title = enrichedTitle(Self.cleanTitle(meeting.windowTitle), appName: meeting.pattern.appName)
 
         // --- Recording ---
         update { next in
             next.phase = .recording
             next.currentMeeting = meeting
+            next.recordingTitle = title
             next.detail = "Recording: \(title)"
         }
 
@@ -522,18 +536,10 @@ class WatchLoop {
         if manualRecordingInfo != next.manualRecordingInfo {
             manualRecordingInfo = next.manualRecordingInfo
         }
+        if recordingTitle != next.recordingTitle { recordingTitle = next.recordingTitle }
         if oldPhase != next.phase {
             onStateChange?(oldPhase, next.phase)
         }
-    }
-
-    /// Strip app suffixes from meeting titles for cleaner display.
-    static func cleanTitle(_ title: String) -> String {
-        let suffixes = [" | Microsoft Teams", " - Zoom", " - Webex"]
-        for suffix in suffixes where title.hasSuffix(suffix) {
-            return String(title.dropLast(suffix.count))
-        }
-        return title
     }
 
     /// Map WatchLoop state to TranscriberState for compatibility with existing UI.

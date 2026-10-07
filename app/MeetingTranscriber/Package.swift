@@ -78,6 +78,8 @@ let package = Package(
                 // in the vendoring link spike).
                 .linkedLibrary("c++"),
                 .linkedFramework("Accelerate"),
+                .linkedFramework("EventKit"),
+                .linkedFramework("Network"),
             ]
         ),
         .testTarget(
