@@ -31,22 +31,6 @@ final class CalendarTokenStoreTests: XCTestCase {
     }
 }
 
-private struct FailingKeychain: KeychainStoring {
-    func save(key _: String, value _: String) -> Bool {
-        false
-    }
-
-    func read(key _: String) -> String? {
-        nil
-    }
-
-    func exists(key _: String) -> Bool {
-        false
-    }
-
-    func delete(key _: String) {}
-}
-
 private struct WriteWithoutReadbackKeychain: KeychainStoring {
     func save(key _: String, value _: String) -> Bool {
         true

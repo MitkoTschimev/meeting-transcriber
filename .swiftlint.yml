@@ -164,4 +164,5 @@ file_name:
     - MeetingPatternsTests.swift
     - TestHelpers.swift
     - WhisperKitDualSourceTests.swift
+    - CalendarControllerStubs.swift
     - main.swift
