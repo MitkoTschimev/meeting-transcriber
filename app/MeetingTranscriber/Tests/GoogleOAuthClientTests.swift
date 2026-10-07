@@ -1,4 +1,5 @@
 @testable import MeetingTranscriber
+import os
 import XCTest
 
 final class GoogleOAuthClientTests: XCTestCase {
@@ -30,7 +31,7 @@ final class GoogleOAuthClientTests: XCTestCase {
     func testAuthorizeExchangesCodeWithPlusInBody() async throws {
         let captured = OSAllocatedUnfairLock<String>(initialState: "")
         MockURLProtocol.handler = { request in
-            captured.withLock { $0 = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "" }
+            captured.withLock { $0 = Self.bodyString(request) }
             return Self.ok(request, json: Self.tokenJSON)
         }
         let client = GoogleOAuthClient(
@@ -56,10 +57,7 @@ final class GoogleOAuthClientTests: XCTestCase {
         let captured = OSAllocatedUnfairLock<(url: String, body: String)>(initialState: ("", ""))
         MockURLProtocol.handler = { request in
             captured.withLock { state in
-                state = (
-                    request.url?.absoluteString ?? "",
-                    String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "",
-                )
+                state = (request.url?.absoluteString ?? "", Self.bodyString(request))
             }
             return Self.ok(request, json: #"{"access_token":"new","expires_in":60,"token_type":"Bearer"}"#)
         }
@@ -105,10 +103,7 @@ final class GoogleOAuthClientTests: XCTestCase {
         let captured = OSAllocatedUnfairLock<(url: String, body: String)>(initialState: ("", ""))
         MockURLProtocol.handler = { request in
             captured.withLock { state in
-                state = (
-                    request.url?.absoluteString ?? "",
-                    String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "",
-                )
+                state = (request.url?.absoluteString ?? "", Self.bodyString(request))
             }
             return Self.ok(request, json: "")
         }
@@ -122,6 +117,24 @@ final class GoogleOAuthClientTests: XCTestCase {
         let capturedRequest = captured.withLock(\.self)
         XCTAssertEqual(capturedRequest.url, GoogleOAuthConfig.revokeEndpoint.absoluteString)
         XCTAssertEqual(capturedRequest.body, "token=1%2F%2Fr%2Bv")
+    }
+
+    /// URLSession turns `httpBody` into `httpBodyStream` before the protocol sees it.
+    private static func bodyString(_ request: URLRequest) -> String {
+        if let data = request.httpBody, !data.isEmpty {
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+        guard let stream = request.httpBodyStream else { return "" }
+        stream.open()
+        defer { stream.close() }
+        var collected = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read <= 0 { break }
+            collected.append(buffer, count: read)
+        }
+        return String(data: collected, encoding: .utf8) ?? ""
     }
 
     private static func mockSession() -> URLSession {
