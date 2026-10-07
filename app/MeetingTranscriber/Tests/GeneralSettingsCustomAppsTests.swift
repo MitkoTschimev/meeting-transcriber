@@ -15,6 +15,12 @@ final class GeneralSettingsCustomAppsTests: XCTestCase {
         return settings
     }
 
+    func testCaptionDocumentsWatchingAndScreenRecording() throws {
+        let settings = try makeSettings(customApps: [])
+        let view = GeneralSettingsView(settings: settings, notificationVisibility: nil)
+        XCTAssertNoThrow(try view.inspect().find(text: SettingsHelp.customWatchApps))
+    }
+
     func testCustomAppsAreListedByNameIncludingUninstalledOnes() throws {
         let settings = try makeSettings(customApps: ["com.apple.finder", "com.example.not-installed"])
         let view = GeneralSettingsView(settings: settings, notificationVisibility: nil)

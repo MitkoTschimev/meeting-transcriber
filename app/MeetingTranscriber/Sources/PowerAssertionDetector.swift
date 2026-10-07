@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import IOKit.pwr_mgt
 import os.log
@@ -180,10 +181,10 @@ class PowerAssertionDetector: MeetingDetecting {
         }
     }
 
-    private let patterns: [AssertionPattern]
-    private let confirmationCount: Int
-    private var consecutiveHits: [String: Int] = [:]
-    private var cooldownUntil: [String: Date] = [:]
+    let patterns: [AssertionPattern]
+    let confirmationCount: Int
+    var consecutiveHits: [String: Int] = [:]
+    var cooldownUntil: [String: Date] = [:]
     private let cooldownDuration: TimeInterval = 5
     /// Diagnostic dedup: (process|name|type) keys already logged as unmatched,
     /// so a persistently-running unmatched meeting app logs once per session.
@@ -209,6 +210,23 @@ class PowerAssertionDetector: MeetingDetecting {
     /// also cannot occupy the single consent slot or a poll's one returned
     /// meeting if it never confirms.
     var isIdentityDenied: (String) -> Bool = { _ in false }
+
+    /// User-added custom watch apps, re-read each poll so Settings "Add App"
+    /// takes effect without restarting the watch loop. A WebRTC assertion from
+    /// one of these auto-records (no consent prompt): adding the app *is* the
+    /// opt-in, and Electron clients like Gather also hold the browser signal.
+    var customAppsProvider: () -> [WatchedCustomApp] = { [] }
+
+    /// Bundle ID / URL of the process that holds an assertion. Production
+    /// reads `NSRunningApplication`; tests inject a helper's identity.
+    var processBundleProvider: (pid_t) -> ProcessBundleRef? = { pid in
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
+        return ProcessBundleRef(bundleID: app.bundleIdentifier ?? "", bundleURL: app.bundleURL)
+    }
+
+    var mainAppPIDProvider: (String) -> pid_t? = { bundleID in
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.processIdentifier
+    }
 
     /// Compiled title matcher per watched app, so the window-title lookup
     /// classifies titles the same way `MeetingDetector` does (idle-tab titles
@@ -242,67 +260,17 @@ class PowerAssertionDetector: MeetingDetecting {
     func checkOnce() -> DetectedMeeting? {
         let assertions = assertionProvider()
         var hitsThisRound: Set<String> = []
-        var firstMatch: [String: (pid: Int32, processName: String, pattern: AssertionPattern)] = [:]
-
-        for (pid, pidAssertions) in assertions {
-            for assertion in pidAssertions {
-                guard let processName = assertion["Process Name"] as? String,
-                      let assertName = assertion["AssertName"] as? String else {
-                    continue
-                }
-                let assertType = assertion["AssertType"] as? String ?? ""
-
-                for pattern in patterns {
-                    // Every piece of per-app state below is filed under the
-                    // identity key, not the pattern name, so two browsers
-                    // sharing the browser pattern never share a slot.
-                    let key = pattern.identityKey(processName: processName)
-
-                    // Permanently refused: never confirm, so it cannot shadow
-                    // another meeting or force a counter-wiping reset.
-                    if isIdentityDenied(key) { continue }
-
-                    // Skip apps in cooldown
-                    if let until = cooldownUntil[key], Date() < until {
-                        continue
-                    }
-
-                    // Only count each identity once per poll
-                    guard !hitsThisRound.contains(key) else { continue }
-
-                    if matchAssertion(processName: processName, assertName: assertName, assertType: assertType, pattern: pattern) {
-                        hitsThisRound.insert(key)
-                        firstMatch[key] = (pid, processName, pattern)
-                        consecutiveHits[key, default: 0] += 1
-                    }
-                }
-            }
-        }
-
+        var firstMatch: [String: (resolved: ResolvedOpenIdentity, pattern: AssertionPattern)] = [:]
+        recordHits(from: assertions, into: &hitsThisRound, firstMatch: &firstMatch)
         logUnmatchedWatchedAssertions(assertions, hits: hitsThisRound)
 
-        // Check confirmation threshold
-        for (key, hits) in consecutiveHits {
-            if hits >= confirmationCount, let match = firstMatch[key] {
-                let meetingPattern = Self.meetingIdentity(
-                    pattern: match.pattern, processName: match.processName,
-                )
-                let title = lookupWindowTitle(for: meetingPattern, pattern: match.pattern)
-                    ?? Self.placeholderTitle(appName: meetingPattern.appName)
-                return DetectedMeeting(
-                    pattern: meetingPattern,
-                    windowTitle: title,
-                    ownerName: match.processName,
-                    windowPID: match.pid,
-                )
-            }
+        if let meeting = confirmedMeeting(from: firstMatch) {
+            return meeting
         }
 
-        // Reset counters for identities with no hit this round
         for key in consecutiveHits.keys where !hitsThisRound.contains(key) {
             consecutiveHits[key] = 0
         }
-
         return nil
     }
 
@@ -316,7 +284,11 @@ class PowerAssertionDetector: MeetingDetecting {
     /// synthesised browser identity that dropped the flag would auto-record a
     /// call with no prompt, which is the exact inverse of the browser-meeting
     /// safety story. `testPerProcessIdentityKeepsTheConsentRequirement` pins it.
-    static func meetingIdentity(pattern: AssertionPattern, processName: String) -> AppMeetingPattern {
+    static func meetingIdentity(
+        pattern: AssertionPattern,
+        processName: String,
+        requiresRecordingConsent: Bool? = nil,
+    ) -> AppMeetingPattern {
         let category = AppMeetingPattern.forAppName(pattern.appName)
         switch pattern.identity {
         case .shared:
@@ -324,6 +296,7 @@ class PowerAssertionDetector: MeetingDetecting {
                 appName: pattern.appName,
                 ownerNames: [processName],
                 meetingPatterns: [],
+                requiresRecordingConsent: requiresRecordingConsent ?? false,
             )
 
         case .perProcess:
@@ -341,14 +314,15 @@ class PowerAssertionDetector: MeetingDetecting {
                 appName: processName,
                 ownerNames: [processName],
                 meetingPatterns: [],
-                requiresRecordingConsent: category?.requiresRecordingConsent ?? true,
+                requiresRecordingConsent: requiresRecordingConsent
+                    ?? category?.requiresRecordingConsent ?? true,
             )
         }
     }
 
     func isMeetingActive(_ meeting: DetectedMeeting) -> Bool {
         let assertions = assertionProvider()
-        for (_, pidAssertions) in assertions {
+        for (pid, pidAssertions) in assertions {
             for assertion in pidAssertions {
                 guard let processName = assertion["Process Name"] as? String,
                       let assertName = assertion["AssertName"] as? String else {
@@ -360,9 +334,17 @@ class PowerAssertionDetector: MeetingDetecting {
                 // `pattern.appName` would compare a category token against a
                 // process name for `.perProcess` patterns, so nothing would ever
                 // match and every browser recording would stop at the end grace.
-                for pattern in patterns
-                    where pattern.identifies(meetingAppName: meeting.pattern.appName, processName: processName) {
-                    if matchAssertion(processName: processName, assertName: assertName, assertType: assertType, pattern: pattern) {
+                for pattern in patterns {
+                    guard matchAssertion(
+                        processName: processName,
+                        assertName: assertName,
+                        assertType: assertType,
+                        pattern: pattern,
+                    ) else { continue }
+                    let resolved = resolveOpenIdentity(
+                        pid: pid, processName: processName, pattern: pattern,
+                    )
+                    if resolved.key == meeting.pattern.appName {
                         return true
                     }
                 }
@@ -400,7 +382,7 @@ class PowerAssertionDetector: MeetingDetecting {
     /// contribute, which is how an unrelated tab title reached the protocol
     /// filename and the model prompt. Building it costs nothing: the
     /// synthesised pattern carries no regexes to compile.
-    private func lookupWindowTitle(
+    func lookupWindowTitle(
         for meetingPattern: AppMeetingPattern,
         pattern: AssertionPattern,
     ) -> String? {
@@ -466,7 +448,7 @@ class PowerAssertionDetector: MeetingDetecting {
         return pattern.assertionTypes.contains(assertType)
     }
 
-    private func matchAssertion(processName: String, assertName: String, assertType: String, pattern: AssertionPattern) -> Bool {
+    func matchAssertion(processName: String, assertName: String, assertType: String, pattern: AssertionPattern) -> Bool {
         Self.matches(pattern: pattern, processName: processName, assertName: assertName, assertType: assertType)
     }
 

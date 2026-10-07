@@ -64,6 +64,14 @@ enum SettingsHelp {
         a report about a silent app track needs.
         """
 
+    static let customWatchApps =
+        """
+        Start Watching must be on. Recording starts when an added app stays in a \
+        call for a few seconds — microphone busy, or an in-call WebRTC connection \
+        if Browser Web Meetings is on. Screen Recording permission is needed to \
+        capture the other participants.
+        """
+
     static let autoOpenMeetingNotes =
         """
         Opens the Meeting Notes window once when recording starts — from a \

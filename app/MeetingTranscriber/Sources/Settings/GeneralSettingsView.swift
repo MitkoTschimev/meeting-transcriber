@@ -114,7 +114,7 @@ struct GeneralSettingsView: View {
         }
         VStack(alignment: .leading, spacing: 4) {
             Button("Add App…", action: addCustomApps)
-            Text("Recording starts when an added app keeps the microphone busy for a few seconds.")
+            Text(SettingsHelp.customWatchApps)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(addAppRefusals, id: \.self) { refusal in

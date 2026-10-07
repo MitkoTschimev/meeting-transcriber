@@ -296,4 +296,108 @@ final class MicInputDetectorTests: XCTestCase {
     func testDefaultMainAppPIDProviderFindsNothingForAnAppThatIsNotRunning() {
         XCTAssertNil(makeDetector().mainAppPIDProvider("com.example.not-installed"))
     }
+
+    func testStockElectronHelperIDOnlyMatchesTheWatchedHost() throws {
+        let gather = URL(fileURLWithPath: "/Applications/GatherV2.app")
+        let slack = URL(fileURLWithPath: "/Applications/Slack.app")
+        let gatherHelper = gather.appendingPathComponent("Contents/Frameworks/Electron Helper.app")
+        let slackHelper = slack.appendingPathComponent("Contents/Frameworks/Electron Helper.app")
+        let detector = MicInputDetector(
+            patterns: [
+                MicInputDetector.MicPattern(
+                    appName: "GatherV2",
+                    bundleIDs: ["com.gather.Gather", "com.github.Electron.helper"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                    appBundleURL: gather,
+                ),
+                MicInputDetector.MicPattern(
+                    appName: "Slack",
+                    bundleIDs: ["com.tinyspeck.slackmacgap", "com.github.Electron.helper"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                    appBundleURL: slack,
+                ),
+            ],
+            confirmationCount: 1,
+        )
+        detector.windowListProvider = { [] }
+        detector.mainAppPIDProvider = {
+            switch $0 {
+            case "com.gather.Gather": 100
+            case "com.tinyspeck.slackmacgap": 200
+            default: nil
+            }
+        }
+
+        detector.bundleURLProvider = { $0 == 555 ? slackHelper : nil }
+        detector.processProvider = { [snapshot("com.github.Electron.helper", pid: 555)] }
+        let slackHit = try XCTUnwrap(detector.checkOnce())
+        XCTAssertEqual(slackHit.pattern.appName, "Slack")
+        XCTAssertEqual(slackHit.windowPID, 200)
+
+        detector.reset()
+        detector.bundleURLProvider = { $0 == 556 ? gatherHelper : nil }
+        detector.processProvider = { [snapshot("com.github.Electron.helper", pid: 556)] }
+        let gatherHit = try XCTUnwrap(detector.checkOnce())
+        XCTAssertEqual(gatherHit.pattern.appName, "GatherV2")
+        XCTAssertEqual(gatherHit.windowPID, 100)
+    }
+
+    func testCustomAppMatchesHelperWithUnrelatedBundleIDViaContainingApp() throws {
+        let gather = URL(fileURLWithPath: "/Applications/GatherV2.app")
+        let helper = URL(fileURLWithPath: "/Applications/GatherV2.app/Contents/Frameworks/Gather Helper.app")
+        let detector = MicInputDetector(
+            patterns: [
+                MicInputDetector.MicPattern(
+                    appName: "GatherV2",
+                    bundleIDs: ["com.gather.Gather"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                    appBundleURL: gather,
+                ),
+            ],
+            confirmationCount: 1,
+        )
+        detector.windowListProvider = { [] }
+        detector.bundleURLProvider = { $0 == 555 ? helper : nil }
+        detector.mainAppPIDProvider = { $0 == "com.gather.Gather" ? 100 : nil }
+        detector.processProvider = { [snapshot("com.github.Electron.helper", pid: 555)] }
+
+        let result = try XCTUnwrap(detector.checkOnce())
+        XCTAssertEqual(result.pattern.appName, "GatherV2")
+        XCTAssertEqual(result.windowPID, 100)
+        XCTAssertTrue(detector.isMeetingActive(result))
+    }
+
+    func testCustomPatternIncludesDiscoveredHelperIDsAndStillTapsTheMainApp() throws {
+        let detector = MicInputDetector(
+            patterns: [
+                MicInputDetector.MicPattern(
+                    appName: "GatherV2",
+                    bundleIDs: ["com.gather.Gather", "com.gather.Gather.helper"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                ),
+            ],
+            confirmationCount: 1,
+        )
+        detector.windowListProvider = { [] }
+        detector.mainAppPIDProvider = { $0 == "com.gather.Gather" ? 100 : nil }
+        detector.processProvider = { [snapshot("com.gather.Gather.helper", pid: 555)] }
+
+        XCTAssertEqual(try XCTUnwrap(detector.checkOnce()).windowPID, 100)
+    }
+
+    func testLiveCustomBundleIDsProviderIsReadEachPoll() {
+        var customIDs: [String] = []
+        let detector = MicInputDetector(patterns: [], confirmationCount: 1)
+        detector.customBundleIDsProvider = { customIDs }
+        detector.windowListProvider = { [] }
+        detector.processProvider = { [snapshot("com.example.callapp")] }
+
+        XCTAssertNil(detector.checkOnce(), "no custom apps yet")
+        customIDs = ["com.example.callapp"]
+        XCTAssertNotNil(detector.checkOnce(), "adding the app must take effect without reconstructing the detector")
+    }
 }

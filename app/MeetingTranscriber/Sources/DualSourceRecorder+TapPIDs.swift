@@ -10,9 +10,10 @@ extension DualSourceRecorder {
     ///
     /// Returns `[rootPID]` alone when the running-application bundle URL is
     /// unavailable (command-line tool, detached process) or enumeration
-    /// finds no PIDs under it. Otherwise returns every PID under the bundle,
-    /// prepending the root if enumeration somehow missed it — order matters
-    /// for the aggregate device's cosmetic name tag (root first).
+    /// finds no PIDs under it. Otherwise returns every PID under the
+    /// *containing* app bundle (Electron/Chromium helpers are nested inside
+    /// the host `.app`), prepending the root if enumeration somehow missed
+    /// it — order matters for the aggregate device's cosmetic name tag (root first).
     static func resolveTapPIDs(rootPID: pid_t) -> [pid_t] {
         // Safari's audio runs in WebKit XPC outside Safari.app — see ProcessResponsibility.tapPIDs.
         ProcessResponsibility.tapPIDs(rootPID: rootPID, bundleDerived: resolveTapPIDs(
@@ -33,7 +34,9 @@ extension DualSourceRecorder {
         enumerate: (URL) -> [pid_t],
     ) -> [pid_t] {
         guard let bundleURL else { return [rootPID] }
-        let enumerated = enumerate(bundleURL)
+        // Helper `.app`s sit inside the host (Electron/Chromium). Enumerating
+        // the helper bundle would miss sibling renderers that play call audio.
+        let enumerated = enumerate(ProcessTreeEnumerator.outermostAppBundle(containing: bundleURL))
         // Empty `enumerated` needs no guard: it falls through to `[rootPID] + []`, the root alone.
         return enumerated.contains(rootPID) ? enumerated : [rootPID] + enumerated
     }
