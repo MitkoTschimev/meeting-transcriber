@@ -100,15 +100,11 @@ final class CalendarControllerDisconnectTests: XCTestCase {
             oauth: StubGoogleOAuth(),
         ) { now }
         let refreshTask = Task { await calendar.refresh() }
-        let deadline = Date().addingTimeInterval(1)
-        while await !(gate.hasWaiter) {
-            if Date() > deadline {
-                XCTFail("Google fetch did not start")
-                await gate.open()
-                await refreshTask.value
-                return
-            }
-            await Task.yield()
+        if await !CalendarControllerFixtures.waitForWaiter(gate) {
+            XCTFail("Google fetch did not start")
+            await gate.open()
+            await refreshTask.value
+            return
         }
         await calendar.disconnectGoogle()
         XCTAssertTrue(calendar.upcoming.isEmpty)
@@ -121,5 +117,63 @@ final class CalendarControllerDisconnectTests: XCTestCase {
         XCTAssertNil(store.read())
         XCTAssertFalse(settings.googleCalendarEnabled)
         XCTAssertFalse(calendar.googleConnected)
+    }
+
+    func testInFlightOAuthRefreshDoesNotOverwriteReconnectToken() async throws {
+        let settings = try CalendarControllerFixtures.makeSettings(in: self)
+        settings.googleOAuthClientID = "cid.apps.googleusercontent.com"
+        let store = CalendarControllerFixtures.makeStore(in: self)
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        try store.save(CalendarControllerFixtures.sampleToken(
+            access: "old-a",
+            refresh: "old-r",
+            expiry: Date(timeIntervalSince1970: 1),
+        ))
+        settings.googleCalendarEnabled = true
+        let newToken = CalendarControllerFixtures.sampleToken(
+            access: "new-a",
+            refresh: "new-r",
+            expiry: now.addingTimeInterval(3600),
+        )
+        let gate = AsyncGate()
+        let oauth = StubGoogleOAuth(
+            authorizeToken: newToken,
+            refreshResult: CalendarControllerFixtures.sampleToken(
+                access: "old-a-refreshed",
+                refresh: "old-r",
+                expiry: now.addingTimeInterval(3600),
+            ),
+        )
+        oauth.refreshGate = gate
+        let live = CalendarEvent(
+            id: "google:live",
+            title: "Standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+        )
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            googleAPI: StubGoogleCalendarAPI(events: [live]),
+            oauth: oauth,
+        ) { now }
+        let refreshTask = Task { await calendar.refresh() }
+        if await !CalendarControllerFixtures.waitForWaiter(gate) {
+            XCTFail("OAuth refresh did not start")
+            await gate.open()
+            await refreshTask.value
+            return
+        }
+        await calendar.disconnectGoogle()
+        await calendar.connectGoogle()
+        XCTAssertEqual(store.read()?.refreshToken, "new-r")
+        await gate.open()
+        await refreshTask.value
+        XCTAssertEqual(store.read()?.refreshToken, "new-r")
+        XCTAssertEqual(store.read()?.accessToken, "new-a")
+        XCTAssertTrue(settings.googleCalendarEnabled)
+        XCTAssertEqual(calendar.upcoming.first?.title, "Standup")
     }
 }

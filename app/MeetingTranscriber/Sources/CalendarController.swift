@@ -32,9 +32,13 @@ final class CalendarController {
     /// live meeting title is not blanked until the next good poll. Cleared on
     /// auth failure and disconnect.
     private var lastGoogleEvents: [CalendarEvent] = []
-    /// Bumped on disconnect so an in-flight refresh that already passed the
-    /// enabled/token check cannot write Google events back after the session ends.
+    /// Bumped on disconnect and connect so an in-flight refresh that already
+    /// passed the enabled/token check cannot write Google events or tokens
+    /// back after the session changes.
     private var refreshGeneration = 0
+    /// Set when `refresh()` is entered while another pass is in flight so
+    /// Connect is not stuck behind an early-return until the next poll.
+    private var refreshAgain = false
 
     var googleConnected: Bool {
         tokenStore.hasToken
@@ -100,6 +104,7 @@ final class CalendarController {
             try tokenStore.save(token)
             googleEmail = token.email
             settings.googleCalendarEnabled = true
+            refreshGeneration += 1
             await refresh()
         } catch {
             lastError = (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -122,10 +127,20 @@ final class CalendarController {
     }
 
     func refresh() async {
-        let generation = refreshGeneration
-        if isRefreshing { return }
+        if isRefreshing {
+            refreshAgain = true
+            return
+        }
         isRefreshing = true
         defer { isRefreshing = false }
+        repeat {
+            refreshAgain = false
+            await performRefresh()
+        } while refreshAgain
+    }
+
+    private func performRefresh() async {
+        let generation = refreshGeneration
         appleStatus = apple.authorizationStatus()
         if let token = tokenStore.read() {
             googleEmail = token.email
@@ -142,7 +157,7 @@ final class CalendarController {
         }
         if settings.googleCalendarEnabled {
             do {
-                let google = try await googleEvents(from: start, to: end)
+                let google = try await googleEvents(from: start, to: end, generation: generation)
                 if canCommitGoogle(generation: generation) {
                     lastGoogleEvents = google
                     groups.append(google)
@@ -205,8 +220,17 @@ final class CalendarController {
         generation == refreshGeneration && settings.googleCalendarEnabled && tokenStore.hasToken
     }
 
-    private func googleEvents(from: Date, to: Date) async throws -> [CalendarEvent] {
+    /// True only for the grant this pass started with. A reconnect writes a
+    /// different refresh token; an in-flight oauth.refresh must not overwrite it.
+    private func belongsToCurrentSession(generation: Int, grant: String) -> Bool {
+        generation == refreshGeneration
+            && settings.googleCalendarEnabled
+            && tokenStore.read()?.refreshToken == grant
+    }
+
+    private func googleEvents(from: Date, to: Date, generation: Int) async throws -> [CalendarEvent] {
         guard var token = tokenStore.read() else { return [] }
+        let grant = token.refreshToken
         let clientID = GoogleOAuthConfig.clientID(settingsValue: settings.googleOAuthClientID)
         if token.isExpired(at: nowProvider()) {
             guard !clientID.isEmpty else {
@@ -214,20 +238,24 @@ final class CalendarController {
             }
             do {
                 token = try await oauth.refresh(token, clientID: clientID)
-                guard settings.googleCalendarEnabled else { return [] }
+                guard belongsToCurrentSession(generation: generation, grant: grant) else { return [] }
                 try tokenStore.save(token)
                 googleEmail = token.email
             } catch {
-                handleGoogleAuthFailure(error)
+                if belongsToCurrentSession(generation: generation, grant: grant) {
+                    handleGoogleAuthFailure(error)
+                }
                 throw error
             }
         }
         do {
             let events = try await googleAPI.fetchEvents(accessToken: token.accessToken, from: from, to: to)
-            guard settings.googleCalendarEnabled, tokenStore.hasToken else { return [] }
+            guard belongsToCurrentSession(generation: generation, grant: grant) else { return [] }
             return events
         } catch {
-            handleGoogleAuthFailure(error)
+            if belongsToCurrentSession(generation: generation, grant: grant) {
+                handleGoogleAuthFailure(error)
+            }
             throw error
         }
     }

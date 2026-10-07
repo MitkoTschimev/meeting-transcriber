@@ -41,6 +41,7 @@ final class StubGoogleOAuth: GoogleOAuthPerforming, @unchecked Sendable {
     var revokeCount = 0
     var lastRevoked: GoogleOAuthToken?
     var onRevoke: (() async throws -> Void)?
+    var refreshGate: AsyncGate?
 
     init(
         authorizeToken: GoogleOAuthToken? = nil,
@@ -63,8 +64,10 @@ final class StubGoogleOAuth: GoogleOAuthPerforming, @unchecked Sendable {
         return authorizeToken
     }
 
-    // swiftlint:disable:next async_without_await
     func refresh(_ token: GoogleOAuthToken, clientID _: String) async throws -> GoogleOAuthToken {
+        if let refreshGate {
+            await refreshGate.wait()
+        }
         if let refreshError { throw refreshError }
         if let refreshResult { return refreshResult }
         return token
@@ -105,6 +108,15 @@ enum CalendarControllerFixtures {
         let account = "CalendarControllerTests-token-\(UUID().uuidString)"
         test.addTeardownBlock { KeychainHelper.delete(key: account) }
         return CalendarTokenStore(account: account)
+    }
+
+    static func waitForWaiter(_ gate: AsyncGate, timeout: TimeInterval = 1) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while await !(gate.hasWaiter) {
+            if Date() > deadline { return false }
+            await Task.yield()
+        }
+        return true
     }
 
     static func sampleToken(
