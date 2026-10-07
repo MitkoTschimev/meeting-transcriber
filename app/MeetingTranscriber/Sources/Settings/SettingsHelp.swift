@@ -64,6 +64,14 @@ enum SettingsHelp {
         a report about a silent app track needs.
         """
 
+    static let autoOpenMeetingNotes =
+        """
+        Opens the Meeting Notes window once when recording starts — from a \
+        detected meeting or a manual microphone / app conversation. Closing \
+        the window mid-meeting does not reopen it. The next session opens it \
+        again.
+        """
+
     static let appleCalendar =
         """
         Uses the macOS Calendar app (EventKit): iCloud, local calendars, and any \

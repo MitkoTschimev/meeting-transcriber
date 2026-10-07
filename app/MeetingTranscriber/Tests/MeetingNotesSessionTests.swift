@@ -29,6 +29,21 @@ final class MeetingNotesSessionTests: XCTestCase {
         XCTAssertEqual(session.phase, .recording)
     }
 
+    func testMarkWindowAutoOpenedSurvivesRetitleAndResetsOnNewSession() {
+        let session = MeetingNotesSession()
+        session.begin(title: "Meeting", appName: "")
+        XCTAssertFalse(session.didAutoOpenWindow)
+        session.markWindowAutoOpened()
+        XCTAssertTrue(session.didAutoOpenWindow)
+
+        session.begin(title: "Standup", appName: "Teams")
+        XCTAssertTrue(session.didAutoOpenWindow, "a retitle is the same session")
+
+        session.finishRecording()
+        session.begin(title: "Two", appName: "Zoom")
+        XCTAssertFalse(session.didAutoOpenWindow, "a new session can present once")
+    }
+
     func testNewBeginAfterFinishStartsFreshSession() {
         let session = MeetingNotesSession()
         session.begin(title: "One", appName: "Zoom")

@@ -66,6 +66,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.liveTranscriptionEnabled)
         XCTAssertTrue(settings.liveCaptionsOverlayEnabled)
         XCTAssertEqual(settings.liveCaptionsSize, .medium)
+        XCTAssertTrue(settings.autoOpenMeetingNotes)
         XCTAssertEqual(settings.protocolStyle, .actionItems)
         XCTAssertFalse(settings.appleCalendarEnabled)
         XCTAssertFalse(settings.googleCalendarEnabled)

@@ -36,6 +36,15 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section("Meeting Notes") {
+                HelpfulToggle(
+                    title: "Open when a meeting starts",
+                    help: SettingsHelp.autoOpenMeetingNotes,
+                    isOn: $settings.autoOpenMeetingNotes,
+                )
+                .accessibilityIdentifier(A11yID.autoOpenMeetingNotesToggle)
+            }
+
             Section("Apps to Watch") {
                 Toggle("Microsoft Teams", isOn: $settings.watchTeams)
                 Toggle("Zoom", isOn: $settings.watchZoom)

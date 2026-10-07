@@ -51,6 +51,7 @@
                 liveCaptionsOverlayEnabled: liveCaptionsOverlayEnabled,
                 liveCaptionsSize: liveCaptionsSize.rawValue,
                 asymmetricSilenceWarningSeconds: asymmetricSilenceWarningSeconds,
+                autoOpenMeetingNotes: autoOpenMeetingNotes,
             )
         }
 
