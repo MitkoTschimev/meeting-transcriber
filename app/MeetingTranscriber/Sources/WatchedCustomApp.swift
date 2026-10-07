@@ -16,8 +16,9 @@ struct ProcessBundleRef: Equatable {
 /// consent prompt (Gather, Slack huddles, and other Electron clients hold both
 /// signals). Matching is by the picked bundle ID, `<id>.*` helpers, nested
 /// helper bundle IDs discovered inside the `.app`, and the containing-app
-/// path — helper IDs that do not share the main prefix (a stock Electron
-/// `com.github.Electron.helper`) still count as the picked app.
+/// path. Helper IDs that do not share the main prefix (a stock Electron
+/// `com.github.Electron.helper`) still count, but only when the process
+/// lives under this host — the stock ID is shared across Electron apps.
 struct WatchedCustomApp: Equatable {
     let bundleID: String
     let displayName: String
@@ -51,10 +52,12 @@ struct WatchedCustomApp: Equatable {
         )
     }
 
+    /// True for the picked ID and `<id>.*` helpers. Unprefixed nested IDs
+    /// (stock `com.github.Electron.helper`) are not unique across Electron
+    /// apps and must not match by ID alone — use `matches(process:)`.
     func matches(processBundleID: String) -> Bool {
         guard !processBundleID.isEmpty else { return false }
-        if matchingBundleIDs.contains(processBundleID) { return true }
-        return processBundleID.hasPrefix(bundleID + ".")
+        return processBundleID == bundleID || processBundleID.hasPrefix(bundleID + ".")
     }
 
     func matches(processBundleURL: URL) -> Bool {
@@ -66,8 +69,10 @@ struct WatchedCustomApp: Equatable {
     func matches(process: ProcessBundleRef?) -> Bool {
         guard let process else { return false }
         if matches(processBundleID: process.bundleID) { return true }
-        if let url = process.bundleURL { return matches(processBundleURL: url) }
-        return false
+        // Unprefixed nested IDs (stock Electron helpers) are not unique;
+        // they only count when the process lives under this host.
+        guard let url = process.bundleURL else { return false }
+        return matches(processBundleURL: url)
     }
 
     /// Every `.app` bundle identifier under `url`, including helpers nested

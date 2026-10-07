@@ -42,7 +42,13 @@ class MicInputDetector: MeetingDetecting {
         var appBundleURL: URL?
 
         func matches(bundleID: String) -> Bool {
-            bundleIDs.contains { $0 == bundleID || (matchesHelpers && bundleID.hasPrefix($0 + ".")) }
+            // Namespaced IDs only. Unprefixed nested IDs discovered inside the
+            // `.app` (stock `com.github.Electron.helper`) are shared across
+            // Electron apps and are matched by containing-app path instead.
+            if matchesHelpers, let mainID = bundleIDs.first {
+                return bundleID == mainID || bundleID.hasPrefix(mainID + ".")
+            }
+            return bundleIDs.contains(bundleID)
         }
 
         func matchesContainingApp(outermostURL: URL) -> Bool {
@@ -216,8 +222,8 @@ class MicInputDetector: MeetingDetecting {
         }
     }
 
-    /// Bundle-ID prefix plus containing-app path, so a helper whose Core Audio
-    /// ID is `com.github.Electron.helper` still counts as the picked app.
+    /// Namespaced bundle IDs first; unprefixed nested IDs (stock Electron
+    /// helpers) only count when the process lives under that pattern's host.
     private func matchingPattern(for process: AudioProcessSnapshot) -> MicPattern? {
         if let pattern = patterns.first(where: { $0.matches(bundleID: process.bundleID) }) {
             return pattern

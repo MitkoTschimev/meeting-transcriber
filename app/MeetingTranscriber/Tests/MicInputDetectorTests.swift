@@ -297,6 +297,53 @@ final class MicInputDetectorTests: XCTestCase {
         XCTAssertNil(makeDetector().mainAppPIDProvider("com.example.not-installed"))
     }
 
+    func testStockElectronHelperIDOnlyMatchesTheWatchedHost() throws {
+        let gather = URL(fileURLWithPath: "/Applications/GatherV2.app")
+        let slack = URL(fileURLWithPath: "/Applications/Slack.app")
+        let gatherHelper = gather.appendingPathComponent("Contents/Frameworks/Electron Helper.app")
+        let slackHelper = slack.appendingPathComponent("Contents/Frameworks/Electron Helper.app")
+        let detector = MicInputDetector(
+            patterns: [
+                MicInputDetector.MicPattern(
+                    appName: "GatherV2",
+                    bundleIDs: ["com.gather.Gather", "com.github.Electron.helper"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                    appBundleURL: gather,
+                ),
+                MicInputDetector.MicPattern(
+                    appName: "Slack",
+                    bundleIDs: ["com.tinyspeck.slackmacgap", "com.github.Electron.helper"],
+                    matchesHelpers: true,
+                    usesBuiltInMeetingPattern: false,
+                    appBundleURL: slack,
+                ),
+            ],
+            confirmationCount: 1,
+        )
+        detector.windowListProvider = { [] }
+        detector.mainAppPIDProvider = {
+            switch $0 {
+            case "com.gather.Gather": 100
+            case "com.tinyspeck.slackmacgap": 200
+            default: nil
+            }
+        }
+
+        detector.bundleURLProvider = { $0 == 555 ? slackHelper : nil }
+        detector.processProvider = { [snapshot("com.github.Electron.helper", pid: 555)] }
+        let slackHit = try XCTUnwrap(detector.checkOnce())
+        XCTAssertEqual(slackHit.pattern.appName, "Slack")
+        XCTAssertEqual(slackHit.windowPID, 200)
+
+        detector.reset()
+        detector.bundleURLProvider = { $0 == 556 ? gatherHelper : nil }
+        detector.processProvider = { [snapshot("com.github.Electron.helper", pid: 556)] }
+        let gatherHit = try XCTUnwrap(detector.checkOnce())
+        XCTAssertEqual(gatherHit.pattern.appName, "GatherV2")
+        XCTAssertEqual(gatherHit.windowPID, 100)
+    }
+
     func testCustomAppMatchesHelperWithUnrelatedBundleIDViaContainingApp() throws {
         let gather = URL(fileURLWithPath: "/Applications/GatherV2.app")
         let helper = URL(fileURLWithPath: "/Applications/GatherV2.app/Contents/Frameworks/Gather Helper.app")

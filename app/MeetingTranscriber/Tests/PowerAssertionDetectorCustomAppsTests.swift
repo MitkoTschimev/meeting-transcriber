@@ -15,7 +15,7 @@ final class PowerAssertionDetectorCustomAppsTests: XCTestCase {
         WatchedCustomApp(
             bundleID: "com.gather.Gather",
             displayName: "GatherV2",
-            matchingBundleIDs: ["com.gather.Gather", "com.gather.Gather.helper"],
+            matchingBundleIDs: ["com.gather.Gather", "com.gather.Gather.helper", "com.github.Electron.helper"],
             appBundleURL: gather,
         )
     }
@@ -78,6 +78,26 @@ final class PowerAssertionDetectorCustomAppsTests: XCTestCase {
         let meeting = try XCTUnwrap(detector.checkOnce())
         XCTAssertEqual(meeting.pattern.appName, "GatherV2")
         XCTAssertFalse(meeting.pattern.requiresRecordingConsent)
+    }
+
+    func testAStockElectronHelperOnAnotherHostIsNotTheWatchedApp() {
+        let slackHelper = URL(
+            fileURLWithPath: "/Applications/Slack.app/Contents/Frameworks/Electron Helper.app",
+        )
+        let detector = detector()
+        detector.processBundleProvider = { _ in
+            ProcessBundleRef(bundleID: "com.github.Electron.helper", bundleURL: slackHelper)
+        }
+        detector.assertionProvider = {
+            PowerAssertionFixture.assertions((9, "Slack Helper", PowerAssertionFixture.webRTC))
+        }
+
+        let meeting = detector.checkOnce()
+        XCTAssertNotEqual(meeting?.pattern.appName, "GatherV2")
+        XCTAssertTrue(
+            meeting?.pattern.requiresRecordingConsent ?? false,
+            "another Electron app's stock helper must still require consent, not auto-record as Gather",
+        )
     }
 
     func testAnUnknownBrowserStillRequiresConsent() {

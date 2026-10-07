@@ -40,9 +40,39 @@ final class WatchedCustomAppTests: XCTestCase {
         )
         XCTAssertTrue(app.matches(processBundleID: "com.gather.Gather"))
         XCTAssertTrue(app.matches(processBundleID: "com.gather.Gather.helper.Renderer"))
-        XCTAssertTrue(app.matches(processBundleID: "com.github.Electron.helper"))
+        XCTAssertFalse(
+            app.matches(processBundleID: "com.github.Electron.helper"),
+            "a stock Electron helper ID is not unique and must not match by ID alone",
+        )
         XCTAssertFalse(app.matches(processBundleID: "com.gather.Gatherextra"))
         XCTAssertFalse(app.matches(processBundleID: "com.tinyspeck.slackmacgap"))
+    }
+
+    func testAStockHelperIDOnlyMatchesTheWatchedHostPath() {
+        let slack = URL(fileURLWithPath: "/Applications/Slack.app")
+        let slackHelper = slack.appendingPathComponent("Contents/Frameworks/Electron Helper.app")
+        let gatherApp = WatchedCustomApp.resolved(
+            bundleID: "com.gather.Gather",
+            applicationURL: { _ in self.gather },
+            nestedBundleIDs: { _ in ["com.github.Electron.helper"] },
+        )
+        let slackApp = WatchedCustomApp.resolved(
+            bundleID: "com.tinyspeck.slackmacgap",
+            applicationURL: { _ in slack },
+            nestedBundleIDs: { _ in ["com.github.Electron.helper"] },
+        )
+
+        let gatherProcess = ProcessBundleRef(bundleID: "com.github.Electron.helper", bundleURL: helper)
+        let slackProcess = ProcessBundleRef(bundleID: "com.github.Electron.helper", bundleURL: slackHelper)
+
+        XCTAssertTrue(gatherApp.matches(process: gatherProcess))
+        XCTAssertFalse(gatherApp.matches(process: slackProcess), "Slack's stock helper must not be attributed to Gather")
+        XCTAssertTrue(slackApp.matches(process: slackProcess))
+        XCTAssertFalse(slackApp.matches(process: gatherProcess), "Gather's stock helper must not be attributed to Slack")
+        XCTAssertFalse(
+            gatherApp.matches(process: ProcessBundleRef(bundleID: "com.github.Electron.helper", bundleURL: nil)),
+            "without a path the stock ID cannot be attributed",
+        )
     }
 
     func testMatchesAHelperByContainingAppPath() {
