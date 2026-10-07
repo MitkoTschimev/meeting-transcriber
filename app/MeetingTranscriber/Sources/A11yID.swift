@@ -143,6 +143,7 @@ enum A11yID {
     static let meetingNotesSpeakerChrome = "meetingNotesSpeakerChrome"
     static let meetingNotesAskBar = "meetingNotesAskBar"
     static let meetingNotesAgenda = "meetingNotesAgenda"
+    static let autoOpenMeetingNotesToggle = "autoOpenMeetingNotesToggle"
 
     // Calendar connections (Settings → General).
     static let appleCalendarToggle = "appleCalendarToggle"

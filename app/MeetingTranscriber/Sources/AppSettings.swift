@@ -272,6 +272,14 @@ final class AppSettings {
         didSet { defaults.set(liveCaptionsSize.rawValue, forKey: "liveCaptionsSize") }
     }
 
+    /// Bring the Meeting Notes window forward once when a recording starts
+    /// (auto-detected meeting or a manual microphone / app conversation).
+    /// Default on so a new session surfaces notes without a menu click.
+    /// Missing UserDefaults key reads as true.
+    var autoOpenMeetingNotes: Bool {
+        didSet { defaults.set(autoOpenMeetingNotes, forKey: "autoOpenMeetingNotes") }
+    }
+
     /// Seconds of continuous asymmetric silence before the indicator + notification
     /// fire. Clamped to [30, 300] on write — short enough to surface a dead channel
     /// inside a meeting, long enough not to trigger on normal speaking pauses.
@@ -626,6 +634,7 @@ final class AppSettings {
         liveCaptionsOverlayEnabled = defaults.object(forKey: "liveCaptionsOverlayEnabled") as? Bool ?? true
         liveCaptionsSize = defaults.string(forKey: "liveCaptionsSize")
             .flatMap(LiveCaptionsSize.init(rawValue:)) ?? .medium
+        autoOpenMeetingNotes = defaults.object(forKey: "autoOpenMeetingNotes") as? Bool ?? true
         asymmetricSilenceWarningSeconds = max(30, min(300, defaults.object(forKey: "asymmetricSilenceWarningSeconds") as? Double ?? 90))
 
         transcriptionEngine = (defaults.string(forKey: "transcriptionEngine")

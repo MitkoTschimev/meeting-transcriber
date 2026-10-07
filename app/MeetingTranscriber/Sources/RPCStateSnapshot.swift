@@ -346,12 +346,14 @@
                 /// `LiveCaptionsSize` raw value ("small" | "medium" | "large").
                 let liveCaptionsSize: String
                 let asymmetricSilenceWarningSeconds: Double
+                let autoOpenMeetingNotes: Bool
 
                 static let empty = Self(
                     endGraceSeconds: 0, noMic: false, recordOnly: false,
                     micDeviceUID: "", micName: "", perChannelIndicatorEnabled: false,
                     liveTranscriptionEnabled: false, liveCaptionsOverlayEnabled: false,
                     liveCaptionsSize: "", asymmetricSilenceWarningSeconds: 0,
+                    autoOpenMeetingNotes: true,
                 )
             }
 

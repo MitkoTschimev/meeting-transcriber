@@ -58,6 +58,11 @@ final class MeetingNotesSession {
     private let persistDelay: Duration
     private var micLabel: String = ""
 
+    /// Whether this recording episode already asked the scene to show the
+    /// notes window. Reset when `begin` starts a new session, not when a
+    /// second call only fills in the meeting title.
+    private(set) var didAutoOpenWindow = false
+
     /// Jobs enqueued a beat before `startedAt` still belong to this session
     /// (clock skew between watch-loop stop and pipeline enqueue).
     private static let enqueueMatchSlack: TimeInterval = 2
@@ -153,6 +158,26 @@ final class MeetingNotesSession {
         thoughtsURL = thoughtsStore?.inProgressURL()
         thoughtsStore?.pruneInProgress(keeping: thoughtsURL)
         loadThoughtsFromCurrentURL()
+    }
+
+    func markWindowAutoOpened() {
+        didAutoOpenWindow = true
+    }
+
+    /// Test seam: production posts `.showMeetingNotes` so the scene brings
+    /// the window forward. Tests replace this to count presentations without
+    /// racing a shared `NotificationCenter` under `swift test --parallel`.
+    var presentWindow: () -> Void = {
+        NotificationCenter.default.post(name: .showMeetingNotes, object: nil)
+    }
+
+    func presentWindowIfNeeded(enabled: Bool) {
+        guard MeetingNotesAutoOpen.shouldPresent(
+            enabled: enabled,
+            alreadyPresentedForSession: didAutoOpenWindow,
+        ) else { return }
+        markWindowAutoOpened()
+        presentWindow()
     }
 
     func finishRecording(recordOnly: Bool = false) {
@@ -326,6 +351,7 @@ final class MeetingNotesSession {
         thoughts = ""
         thoughtsURL = nil
         speakerPalette = SpeakerAccent.Palette()
+        didAutoOpenWindow = false
         isLoadingThoughts = false
     }
 
