@@ -22,11 +22,6 @@ extension WatchingController {
         } else {
             meetingNotes.begin(title: "Meeting", appName: "")
         }
-        guard MeetingNotesAutoOpen.shouldPresent(
-            enabled: settings.autoOpenMeetingNotes,
-            alreadyPresentedForSession: meetingNotes.didAutoOpenWindow,
-        ) else { return }
-        meetingNotes.markWindowAutoOpened()
-        presentMeetingNotes()
+        meetingNotes.presentWindowIfNeeded(enabled: settings.autoOpenMeetingNotes)
     }
 }

@@ -164,6 +164,22 @@ final class MeetingNotesSession {
         didAutoOpenWindow = true
     }
 
+    /// Test seam: production posts `.showMeetingNotes` so the scene brings
+    /// the window forward. Tests replace this to count presentations without
+    /// racing a shared `NotificationCenter` under `swift test --parallel`.
+    var presentWindow: () -> Void = {
+        NotificationCenter.default.post(name: .showMeetingNotes, object: nil)
+    }
+
+    func presentWindowIfNeeded(enabled: Bool) {
+        guard MeetingNotesAutoOpen.shouldPresent(
+            enabled: enabled,
+            alreadyPresentedForSession: didAutoOpenWindow,
+        ) else { return }
+        markWindowAutoOpened()
+        presentWindow()
+    }
+
     func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
         persistThoughtsNow()

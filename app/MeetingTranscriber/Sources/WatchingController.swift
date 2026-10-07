@@ -53,13 +53,6 @@ final class WatchingController {
     let meetingNotes: MeetingNotesSession
     let calendarLookup: (Date) -> CalendarEvent?
 
-    /// Test seam: production posts `.showMeetingNotes` so the scene brings
-    /// the window forward. Tests replace this to count presentations without
-    /// racing a shared `NotificationCenter` under `swift test --parallel`.
-    var presentMeetingNotes: () -> Void = {
-        NotificationCenter.default.post(name: .showMeetingNotes, object: nil)
-    }
-
     /// Microphone-access gate. Injectable so tests skip the real TCC prompt; the
     /// return value is intentionally ignored (the loop is created regardless, and
     /// surfaces a permission problem through its own `permissionChecker`).

@@ -44,6 +44,31 @@ final class MeetingNotesSessionTests: XCTestCase {
         XCTAssertFalse(session.didAutoOpenWindow, "a new session can present once")
     }
 
+    func testPresentWindowIfNeededOpensOnceWhenEnabled() {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "Zoom")
+        var presentations = 0
+        session.presentWindow = { presentations += 1 }
+
+        session.presentWindowIfNeeded(enabled: true)
+        session.presentWindowIfNeeded(enabled: true)
+
+        XCTAssertEqual(presentations, 1)
+        XCTAssertTrue(session.didAutoOpenWindow)
+    }
+
+    func testPresentWindowIfNeededSkipsWhenDisabled() {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "Zoom")
+        var presentations = 0
+        session.presentWindow = { presentations += 1 }
+
+        session.presentWindowIfNeeded(enabled: false)
+
+        XCTAssertEqual(presentations, 0)
+        XCTAssertFalse(session.didAutoOpenWindow)
+    }
+
     func testNewBeginAfterFinishStartsFreshSession() {
         let session = MeetingNotesSession()
         session.begin(title: "One", appName: "Zoom")
