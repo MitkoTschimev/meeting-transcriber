@@ -45,9 +45,9 @@ final class MeetingNotesSession {
     private(set) var isRetryingNotes = false
     /// Voices heard in this session; naming one relabels all of its lines
     /// and teaches the saved voice profiles. Reset with every new session.
-    private(set) var speakerRoster = LiveSpeakerRoster()
+    var speakerRoster = LiveSpeakerRoster()
     /// Saved voice names offered when naming a speaker, most recent first.
-    private(set) var savedVoiceNames: [String] = []
+    var savedVoiceNames: [String] = []
     /// Saved voice profiles (`speakers.json` in production). nil in tests that
     /// do not exercise naming, and then naming is session-only.
     @ObservationIgnored var voiceProfiles: (any VoiceProfileStoring)? {
@@ -59,7 +59,7 @@ final class MeetingNotesSession {
     @ObservationIgnored var onSpeakerRelabel: ((Set<Int>, Int, String) -> Void)?
     /// True once this session's named voices have been written. A later
     /// `retireLiveRoster` (pipeline transcript, next `begin`, quit) is a no-op.
-    private var didEnrollNamedVoices = false
+    var didEnrollNamedVoices = false
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -80,7 +80,7 @@ final class MeetingNotesSession {
     private var isLoadingThoughts = false
     private var persistTask: Task<Void, Never>?
     private let persistDelay: Duration
-    private var micLabel: String = ""
+    var micLabel: String = ""
 
     /// Whether this recording episode already asked the scene to show the
     /// notes window. Reset when `begin` starts a new session, not when a
@@ -174,77 +174,6 @@ final class MeetingNotesSession {
             micLabel: micLabel,
             notYouSpeakerIDs: speakerRoster.notYouSpeakerIDs,
         )
-    }
-
-    // MARK: - Live speaker naming
-
-    /// Whether the transcript on screen is the live one, whose speakers can
-    /// be named. Once the pipeline transcript replaces it, diarized names win
-    /// and naming moves to the post-meeting dialog.
-    var canNameLiveSpeakers: Bool {
-        pipelineTranscript == nil && !speakerRoster.speakers.isEmpty
-    }
-
-    /// The voice of the most recent finalized line, for the "speaking now"
-    /// highlight.
-    var lastLiveSpeakerID: Int? {
-        lines.last { $0.speakerID != nil }?.speakerID
-    }
-
-    /// Attach a finalized utterance to a session voice (see
-    /// `LiveCaptionsState.resolveSpeaker`). A later profile match that names
-    /// an earlier "Speaker N" relabels that voice's earlier lines too.
-    func resolveLiveSpeaker(
-        _ sample: LiveSpeakerSample?,
-        channel: LiveCaptionChannel,
-        fallbackLabel: String,
-    ) -> LiveSpeakerRoster.Resolution {
-        if phase == .idle { begin(title: "Meeting", appName: "") }
-        let resolution = speakerRoster.resolve(sample, channel: channel, fallbackLabel: fallbackLabel)
-        if let relabeled = resolution.relabeledSpeakerID {
-            relabelLines(ids: [relabeled], toID: relabeled, label: resolution.label)
-        }
-        return resolution
-    }
-
-    /// Name (or rename) a session voice: every line of that voice takes the
-    /// name now and later lines arrive with it. Naming it after another voice
-    /// in this session merges the two. The voice is written to `speakers.json`
-    /// only when the recording finishes, so a typo that is then corrected is
-    /// never saved, and Alice→Bob does not leave the embedding folded into Alice.
-    func renameLiveSpeaker(id: Int, to name: String) {
-        guard let outcome = speakerRoster.rename(id: id, to: name, micLabel: micLabel) else { return }
-        relabelLines(ids: Set(outcome.affectedIDs), toID: outcome.speakerID, label: outcome.label)
-        let isYou = speakerRoster.speaker(id: outcome.speakerID)?.isYou ?? false
-        registerSpeaker(outcome.label, isYou: isYou)
-    }
-
-    func refreshSavedVoices() {
-        let names = voiceProfiles?.savedVoiceNames() ?? []
-        if names != savedVoiceNames { savedVoiceNames = names }
-    }
-
-    private func relabelLines(ids: Set<Int>, toID: Int, label: String) {
-        lines = lines.map { line in
-            guard let id = line.speakerID, ids.contains(id) else { return line }
-            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
-        }
-        onSpeakerRelabel?(ids, toID, label)
-    }
-
-    /// Write each user-named voice to the saved profiles once, under its
-    /// final name. Called when the live roster is retired — not on Stop,
-    /// so a name given or corrected after Stop is what gets saved.
-    func retireLiveRoster() {
-        guard !didEnrollNamedVoices else { return }
-        didEnrollNamedVoices = true
-        guard let voiceProfiles else { return }
-        let enrollments = speakerRoster.pendingEnrollments(micLabel: micLabel)
-        guard !enrollments.isEmpty else { return }
-        for enrollment in enrollments {
-            voiceProfiles.enroll(enrollment)
-        }
-        refreshSavedVoices()
     }
 
     /// Append-only palette so live→diarized handoff keeps first-seen colors.
@@ -479,7 +408,15 @@ final class MeetingNotesSession {
         }
     }
 
-    private func registerSpeaker(_ raw: String, isYou: Bool) {
+    func relabelLines(ids: Set<Int>, toID: Int, label: String) {
+        lines = lines.map { line in
+            guard let id = line.speakerID, ids.contains(id) else { return line }
+            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
+        }
+        onSpeakerRelabel?(ids, toID, label)
+    }
+
+    func registerSpeaker(_ raw: String, isYou: Bool) {
         speakerPalette.register(SpeakerAccent.identityKey(raw, micLabel: micLabel, isYou: isYou))
     }
 
