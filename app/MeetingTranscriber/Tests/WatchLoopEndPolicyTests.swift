@@ -147,6 +147,53 @@ final class WatchLoopEndPolicyTests: XCTestCase {
         // at t=13 proves the reset.
     }
 
+    // MARK: - Call-audio idle backstop
+
+    private static let idleConfig = WatchLoopEndConfig(
+        maxDuration: 1000, endGracePeriod: 10, callAudioIdleTimeout: 300,
+    )
+
+    private func idleStep(elapsed: TimeInterval, lastAudioAt: TimeInterval?, active: Bool = true) -> WatchLoopEndDecision {
+        WatchLoopEndPolicy.step(
+            config: Self.idleConfig,
+            now: t0.addingTimeInterval(elapsed),
+            startTime: t0,
+            graceStart: nil,
+            meetingActive: active,
+            lastCallAudioAt: lastAudioAt.map { t0.addingTimeInterval($0) },
+        )
+    }
+
+    /// The Gather case: the detector still says "in a call", but nobody has
+    /// been heard for the whole idle window, so the recording ends.
+    func testStillActiveMeetingStopsAfterCallAudioIdleTimeout() {
+        XCTAssertEqual(idleStep(elapsed: 400, lastAudioAt: 100), .stopCallAudioIdle)
+    }
+
+    func testRecentCallAudioKeepsAnActiveMeetingRecording() {
+        XCTAssertEqual(idleStep(elapsed: 399, lastAudioAt: 100), .continuePolling(graceStart: nil))
+    }
+
+    /// A false start on an idle app (never any call audio) counts from the
+    /// recording start instead of running forever.
+    func testNoCallAudioEverCountsFromRecordingStart() {
+        XCTAssertEqual(idleStep(elapsed: 299, lastAudioAt: nil), .continuePolling(graceStart: nil))
+        XCTAssertEqual(idleStep(elapsed: 300, lastAudioAt: nil), .stopCallAudioIdle)
+    }
+
+    /// Without a timeout (every built-in app) silence never ends a meeting
+    /// that its detector still reports.
+    func testNoIdleTimeoutMeansSilenceNeverStops() {
+        XCTAssertEqual(
+            step(meetingActive: true, elapsedSinceStart: 99),
+            .continuePolling(graceStart: nil),
+        )
+    }
+
+    func testMaxDurationStillWinsOverIdle() {
+        XCTAssertEqual(idleStep(elapsed: 1000.5, lastAudioAt: nil), .stopMaxDurationExceeded)
+    }
+
     /// Helper: assert decision is `.continuePolling` and return the new
     /// grace-start carried forward to the next poll.
     private func expectContinue(_ decision: WatchLoopEndDecision) -> Date? {

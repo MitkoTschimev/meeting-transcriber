@@ -258,10 +258,14 @@ class PowerAssertionDetector: MeetingDetecting {
     }
 
     func checkOnce() -> DetectedMeeting? {
+        checkOnce(ignoring: [])
+    }
+
+    func checkOnce(ignoring ignored: Set<String>) -> DetectedMeeting? {
         let assertions = assertionProvider()
         var hitsThisRound: Set<String> = []
         var firstMatch: [String: (resolved: ResolvedOpenIdentity, pattern: AssertionPattern)] = [:]
-        recordHits(from: assertions, into: &hitsThisRound, firstMatch: &firstMatch)
+        recordHits(from: assertions, ignoring: ignored, into: &hitsThisRound, firstMatch: &firstMatch)
         logUnmatchedWatchedAssertions(assertions, hits: hitsThisRound)
 
         if let meeting = confirmedMeeting(from: firstMatch) {

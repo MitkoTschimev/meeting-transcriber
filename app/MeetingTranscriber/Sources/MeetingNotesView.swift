@@ -35,6 +35,10 @@ struct MeetingNotesView: View {
     @Bindable var queue: PipelineQueue
     let liveTranscriptionEnabled: Bool
     var upcomingEvents: [CalendarEvent] = []
+    /// Ends the current recording (same path as the menu bar's Stop
+    /// Recording). nil hides the button: nothing is recording that a Stop
+    /// could end.
+    var onStopRecording: (() -> Void)?
 
     @State private var tab: MeetingNotesTab
     @State private var userPickedTab: Bool
@@ -45,6 +49,7 @@ struct MeetingNotesView: View {
         queue: PipelineQueue,
         liveTranscriptionEnabled: Bool,
         upcomingEvents: [CalendarEvent] = [],
+        onStopRecording: (() -> Void)? = nil,
         initialTab: MeetingNotesTab = .transcript,
     ) {
         self.session = session
@@ -52,6 +57,7 @@ struct MeetingNotesView: View {
         self.queue = queue
         self.liveTranscriptionEnabled = liveTranscriptionEnabled
         self.upcomingEvents = upcomingEvents
+        self.onStopRecording = onStopRecording
         _tab = State(initialValue: initialTab)
         _userPickedTab = State(initialValue: initialTab != .transcript)
     }
@@ -115,10 +121,14 @@ struct MeetingNotesView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(session.displayTitle)
-                .font(.system(.largeTitle, design: .serif))
-                .fontWeight(.regular)
-                .accessibilityIdentifier(A11yID.meetingNotesTitle)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(session.displayTitle)
+                    .font(.system(.largeTitle, design: .serif))
+                    .fontWeight(.regular)
+                    .accessibilityIdentifier(A11yID.meetingNotesTitle)
+                Spacer(minLength: 0)
+                stopButton
+            }
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: 8) {
@@ -141,6 +151,23 @@ struct MeetingNotesView: View {
         .padding(.horizontal, 28)
         .padding(.top, 24)
         .padding(.bottom, 12)
+    }
+
+    /// Shown only while recording and when there is something to stop.
+    @ViewBuilder private var stopButton: some View {
+        if session.phase == .recording, let onStopRecording {
+            Button(role: .destructive) {
+                onStopRecording()
+            } label: {
+                Label("Stop Recording", systemImage: "stop.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .controlSize(.large)
+            .keyboardShortcut(".", modifiers: .command)
+            .help("End this recording now. The transcript and notes are finalized as if the meeting had ended.")
+            .accessibilityIdentifier(A11yID.meetingNotesStopButton)
+        }
     }
 
     private var agenda: some View {

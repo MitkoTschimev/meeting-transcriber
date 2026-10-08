@@ -14,6 +14,11 @@ enum WatchLoopEndDecision: Equatable {
     /// Stop because the meeting has been inactive for the full grace
     /// period — the meeting is definitively over.
     case stopGraceExpired
+    /// Stop because the detector signal is still up but the call channel has
+    /// carried no audible audio for `callAudioIdleTimeout`. Only reachable for
+    /// meetings whose detector signal is known to outlive the call (see
+    /// `WatchLoop.usesCallAudioIdleBackstop`).
+    case stopCallAudioIdle
 }
 
 /// Static configuration for `WatchLoopEndPolicy.step` — duration limits
@@ -21,6 +26,10 @@ enum WatchLoopEndDecision: Equatable {
 struct WatchLoopEndConfig: Equatable {
     let maxDuration: TimeInterval
     let endGracePeriod: TimeInterval
+    /// How long the call channel may stay silent before a still-"active"
+    /// meeting is treated as over. `nil` disables the backstop, which is the
+    /// default and what every built-in app with a reliable end signal uses.
+    var callAudioIdleTimeout: TimeInterval?
 }
 
 /// Pure decision logic for `WatchLoop.waitForMeetingEnd`. Separated so
@@ -39,15 +48,25 @@ enum WatchLoopEndPolicy {
     ///     if the meeting was active on the last poll (or has never gone
     ///     inactive).
     ///   - meetingActive: Whether the meeting is active right now.
+    ///   - lastCallAudioAt: When the call channel last carried audible audio,
+    ///     or `nil` if it has not yet in this recording (then the recording
+    ///     start counts, so a false start on an idle app still ends).
     static func step(
         config: WatchLoopEndConfig,
         now: Date,
         startTime: Date,
         graceStart: Date?,
         meetingActive: Bool,
+        lastCallAudioAt: Date? = nil,
     ) -> WatchLoopEndDecision {
         if now.timeIntervalSince(startTime) > config.maxDuration {
             return .stopMaxDurationExceeded
+        }
+        // The idle window is its own grace: it already spans minutes of
+        // silence, so it stops at once instead of opening a second window.
+        if let idleTimeout = config.callAudioIdleTimeout,
+           now.timeIntervalSince(lastCallAudioAt ?? startTime) >= idleTimeout {
+            return .stopCallAudioIdle
         }
         if meetingActive {
             return .continuePolling(graceStart: nil)

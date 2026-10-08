@@ -47,6 +47,9 @@ class WatchLoop {
     let pollInterval: TimeInterval
     let endGracePeriod: TimeInterval
     let maxDuration: TimeInterval
+    /// Silence on the call channel after which a meeting whose detector signal
+    /// outlives the call is ended anyway. See `usesCallAudioIdleBackstop`.
+    let callAudioIdleTimeout: TimeInterval
     let noMic: Bool
     let micDeviceUID: String?
     /// Dynamic accessor — read at recording-start time so toggling the setting
@@ -112,6 +115,18 @@ class WatchLoop {
 
     private var watchTask: Task<Void, Never>?
 
+    /// Set by `endCurrentMeeting()`; read by `waitForMeetingEnd`. Internal
+    /// because `WatchLoop+EndMeeting.swift` owns the transitions.
+    var endRequested = false
+    /// The sleep between end polls, held so a Stop press wakes the poller
+    /// instead of waiting out the poll interval.
+    var endPollSleeper: Task<Void, any Error>?
+    /// A meeting that was ended while its detector still reported it active
+    /// (Stop pressed, or the call went silent). Kept out of detection until
+    /// its signal actually drops, so the loop does not record it again five
+    /// seconds later. See `WatchLoop+EndMeeting.swift`.
+    var parkedMeeting: DetectedMeeting?
+
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?
 
@@ -122,6 +137,7 @@ class WatchLoop {
         pollInterval: TimeInterval = 3.0,
         endGracePeriod: TimeInterval = 15.0,
         maxDuration: TimeInterval = 14400,
+        callAudioIdleTimeout: TimeInterval = WatchLoop.defaultCallAudioIdleTimeout,
         noMic: Bool = false,
         micDeviceUID: String? = nil,
         verboseDiagnostics: @escaping () -> Bool = { false },
@@ -145,6 +161,7 @@ class WatchLoop {
         self.pollInterval = pollInterval
         self.endGracePeriod = endGracePeriod
         self.maxDuration = maxDuration
+        self.callAudioIdleTimeout = callAudioIdleTimeout
         self.noMic = noMic
         self.micDeviceUID = micDeviceUID
         self.verboseDiagnostics = verboseDiagnostics
@@ -318,9 +335,10 @@ class WatchLoop {
             // Re-checked because the answer may have landed while another
             // meeting was recording, which blocks this loop for its duration —
             // by now the approved call can be long over.
+            releaseParkedMeetingIfEnded()
             if let approved = takeApprovedConsentMeeting(), detector.isMeetingActive(approved) {
                 if await runMeeting(approved) { return }
-            } else if let meeting = detector.checkOnce() {
+            } else if let meeting = detector.checkOnce(ignoring: ignoredIdentities) {
                 // Browser meetings (issue #503) ask before recording; native
                 // meetings skip this (flag false). See WatchLoop+Consent.swift.
                 // Asking does NOT block this loop — that is the whole point:
@@ -380,6 +398,7 @@ class WatchLoop {
             next.detail = "Recording: \(title)"
         }
 
+        endRequested = false
         let source = RecordingSource.forApp(pid: meeting.windowPID, noMic: noMic)
         let recorder = await recorderFactory()
         try recorder.start(
@@ -409,10 +428,12 @@ class WatchLoop {
         // `enqueueRecording()`. `recorder.stop()` + `enqueueRecording()` below
         // are synchronous, so they still run to completion on the cancelled task.
         do {
-            try await waitForMeetingEnd(meeting)
+            let reason = try await waitForMeetingEnd(meeting)
+            parkIfEndedEarly(meeting, reason: reason)
         } catch is CancellationError {
             logger.info("Watch cancelled mid-recording — finalizing in-flight recording")
         }
+        endRequested = false
 
         // Stop recording
         let recording = try recorder.stop()
@@ -429,35 +450,52 @@ class WatchLoop {
 
     // MARK: - Meeting End Detection
 
-    func waitForMeetingEnd(_ meeting: DetectedMeeting) async throws {
+    @discardableResult
+    func waitForMeetingEnd(_ meeting: DetectedMeeting) async throws -> MeetingEndReason {
         var graceStart: Date?
+        var lastCallAudioAt: Date?
         let startTime = nowProvider()
         let config = WatchLoopEndConfig(
             maxDuration: maxDuration,
             endGracePeriod: endGracePeriod,
+            callAudioIdleTimeout: Self.usesCallAudioIdleBackstop(meeting) ? callAudioIdleTimeout : nil,
         )
 
         while !Task.isCancelled {
+            if endRequested {
+                logger.info("Recording stopped by the user")
+                return .userStopped
+            }
+            let now = nowProvider()
+            if callAudioIsAudible() { lastCallAudioAt = now }
             let decision = WatchLoopEndPolicy.step(
                 config: config,
-                now: nowProvider(),
+                now: now,
                 startTime: startTime,
                 graceStart: graceStart,
                 meetingActive: detector.isMeetingActive(meeting),
+                lastCallAudioAt: lastCallAudioAt,
             )
             switch decision {
             case .stopMaxDurationExceeded:
                 logger.info("Max recording duration reached (\(Int(self.maxDuration))s)")
-                return
+                return .maxDuration
 
             case .stopGraceExpired:
-                return
+                return .signalEnded
+
+            case .stopCallAudioIdle:
+                logger.info(
+                    "No call audio for \(Int(self.callAudioIdleTimeout))s while \(meeting.pattern.appName, privacy: .public) still reports a call — ending the recording",
+                )
+                return .callAudioIdle
 
             case let .continuePolling(newGraceStart):
                 graceStart = newGraceStart
             }
-            try await sleepProvider(pollInterval)
+            try await sleepUntilNextEndPoll()
         }
+        return .cancelled
     }
 
     // MARK: - Helpers

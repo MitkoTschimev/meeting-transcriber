@@ -143,6 +143,7 @@ enum A11yID {
     static let meetingNotesSpeakerChrome = "meetingNotesSpeakerChrome"
     static let meetingNotesAskBar = "meetingNotesAskBar"
     static let meetingNotesAgenda = "meetingNotesAgenda"
+    static let meetingNotesStopButton = "meetingNotesStopButton"
     static let autoOpenMeetingNotesToggle = "autoOpenMeetingNotesToggle"
     static let meetingNotesSummaryError = "meetingNotesSummaryError"
     static let meetingNotesRetryButton = "meetingNotesRetryButton"
