@@ -69,6 +69,29 @@ final class MeetingNotesStopButtonTests: XCTestCase {
         XCTAssertEqual(stops.value, 0)
     }
 
+    func testConfirmDisarmsAfterTimeoutIfStillArmed() async {
+        var armed = true
+        await MeetingNotesStopButton.disarmIfStillArmed(
+            timeout: 0,
+            sleep: { _ in },
+            isStillArmed: { armed },
+            disarm: { armed = false },
+        )
+        XCTAssertFalse(armed)
+    }
+
+    func testConfirmDoesNotDisarmAfterKeepRecording() async {
+        let armed = false
+        var disarmed = false
+        await MeetingNotesStopButton.disarmIfStillArmed(
+            timeout: 0,
+            sleep: { _ in },
+            isStillArmed: { armed },
+            disarm: { disarmed = true },
+        )
+        XCTAssertFalse(disarmed)
+    }
+
     func testNoStopButtonWithoutAStopAction() throws {
         let session = MeetingNotesSession()
         session.begin(title: "Standup", appName: "GatherV2")

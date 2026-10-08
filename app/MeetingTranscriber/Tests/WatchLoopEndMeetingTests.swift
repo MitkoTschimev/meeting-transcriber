@@ -97,6 +97,7 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(elapsed, 300)
         XCTAssertLessThan(elapsed, 3600, "must end on silence, not at max duration")
         XCTAssertEqual(loop.parkedMeeting?.pattern.appName, "GatherV2")
+        XCTAssertTrue(loop.discardedSilentIdleRecording, "never heard anyone: do not enqueue five minutes of silence")
     }
 
     func testCallAudioKeepsTheCustomAppRecordingGoing() async throws {
@@ -116,6 +117,7 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         let elapsed = clock.now.timeIntervalSince(start)
         XCTAssertGreaterThanOrEqual(elapsed, 900, "idle counts from the last audible poll")
         XCTAssertLessThan(elapsed, 1000)
+        XCTAssertFalse(loop.discardedSilentIdleRecording, "this recording heard the call; keep it")
     }
 
     /// Built-in apps keep their call-scoped end signal; silence alone (a long
@@ -134,20 +136,21 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertNil(loop.parkedMeeting)
     }
 
-    /// A capture that gave up cannot say whether anyone is talking, so it
-    /// must not end a meeting that may well be running.
-    func testGivenUpAppCaptureNeverCountsAsSilence() async throws {
+    /// A capture that gave up cannot say whether anyone is talking, so idle
+    /// must not fire until the unknown-quiet fallback elapses.
+    func testGivenUpAppCaptureDoesNotIdleBeforeUnknownFallback() async throws {
         let detector = ScriptedMeetingDetector()
         let recorder = makeMockRecorder()
         recorder.appLevelDBFS = -120
         recorder.appCaptureGaveUp = true
         let clock = TestClock()
-        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 200)
         let start = clock.now
 
         try await loop.handleMeeting(gatherMeeting())
 
-        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 200)
+        XCTAssertNil(loop.parkedMeeting, "max duration does not park")
     }
 
     func testUsesBackstopOnlyForSynthesisedAutoRecordIdentities() {
@@ -177,24 +180,24 @@ final class WatchLoopEndMeetingTests: XCTestCase {
     }
 
     /// A tap that has stopped delivering buffers cannot be read as "the call
-    /// went silent". Ending and parking would drop the rest of a live meeting.
-    func testStalledAppTapNeverCountsAsSilence() async throws {
+    /// went silent" until the unknown-quiet fallback has elapsed.
+    func testStalledAppTapDoesNotIdleBeforeUnknownFallback() async throws {
         let detector = ScriptedMeetingDetector()
         let recorder = makeMockRecorder()
         recorder.appLevelDBFS = -120
         recorder.micLevelDBFS = -120
         recorder.appSignalAges = ChannelSignalAges(secondsSinceLastBuffer: 5, secondsSinceLastEnergy: 5)
         let clock = TestClock()
-        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 200)
         let start = clock.now
 
         try await loop.handleMeeting(gatherMeeting())
 
-        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 200)
         XCTAssertNil(loop.parkedMeeting)
     }
 
-    func testSilentTrackWatchdogGaveUpNeverCountsAsSilence() async throws {
+    func testSilentTrackWatchdogFallsBackToQuietAndIdleStops() async throws {
         let detector = ScriptedMeetingDetector()
         let recorder = makeMockRecorder()
         recorder.appLevelDBFS = -120
@@ -205,7 +208,37 @@ final class WatchLoopEndMeetingTests: XCTestCase {
 
         try await loop.handleMeeting(gatherMeeting())
 
-        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
+        let elapsed = clock.now.timeIntervalSince(start)
+        XCTAssertGreaterThanOrEqual(elapsed, CallActivityPolicy.unknownQuietFallback)
+        XCTAssertLessThan(elapsed, 400, "unknown + quiet mic must not run until max duration")
+        XCTAssertEqual(loop.parkedMeeting?.pattern.appName, "GatherV2")
+        XCTAssertTrue(loop.discardedSilentIdleRecording)
+    }
+
+    /// One noisy mic sample must not restart the idle timer on an otherwise
+    /// silent always-on app.
+    func testSingleMicSpikeDoesNotKeepAnIdleRecordingGoing() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        recorder.micLevelDBFS = -30
+        let clock = TestClock()
+        let polls = ManagedCounter()
+        detector.active = { _ in
+            if polls.increment() >= 1 {
+                recorder.micLevelDBFS = -120
+            }
+            return true
+        }
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock)
+        let start = clock.now
+
+        try await loop.handleMeeting(gatherMeeting())
+
+        let elapsed = clock.now.timeIntervalSince(start)
+        XCTAssertGreaterThanOrEqual(elapsed, 300)
+        XCTAssertLessThan(elapsed, 360, "a single mic spike is not sustained speech")
+        XCTAssertTrue(loop.discardedSilentIdleRecording)
     }
 
     func testBrowserMeetingIsNotEndedBySilence() async throws {
@@ -316,14 +349,38 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertNil(loop.parkedMeeting)
     }
 
-    /// Built-in apps drop their call signal when the meeting ends. Parking
-    /// them on Stop would skip a back-to-back call that starts before that
-    /// leftover signal disappears.
-    func testBuiltInAppUserStopDoesNotPark() {
-        let loop = WatchLoop(detector: ScriptedMeetingDetector())
+    /// User Stop must stick for every app until its detector signal drops
+    /// (or the 30 min TTL). Restarting a Teams/Zoom/browser recording a few
+    /// seconds later — and re-prompting the browser — is the bug.
+    func testBuiltInAppUserStopParksUntilSignalDrops() {
+        let detector = ScriptedMeetingDetector()
+        let loop = WatchLoop(detector: detector)
         loop.parkIfEndedEarly(zoomMeeting(), reason: .userStopped)
-        XCTAssertNil(loop.parkedMeeting)
+        XCTAssertEqual(loop.ignoredIdentities, ["Zoom"])
+
+        loop.releaseParkedMeetingIfEnded()
+        XCTAssertEqual(loop.ignoredIdentities, ["Zoom"], "signal still up: stay parked")
+
+        detector.active = { _ in false }
+        loop.releaseParkedMeetingIfEnded()
         XCTAssertTrue(loop.ignoredIdentities.isEmpty)
+    }
+
+    func testBrowserUserStopParksUntilSignalDrops() {
+        let detector = ScriptedMeetingDetector()
+        let loop = WatchLoop(detector: detector)
+        loop.parkIfEndedEarly(chromeMeeting(), reason: .userStopped)
+        XCTAssertEqual(loop.ignoredIdentities, ["Google Chrome"])
+    }
+
+    /// Idle-audio parking stays limited to always-on apps. A Zoom call that
+    /// somehow idle-stopped must not skip the next Zoom meeting.
+    func testIdleEndDoesNotParkBuiltInApp() {
+        let loop = WatchLoop(detector: ScriptedMeetingDetector())
+        loop.parkIfEndedEarly(zoomMeeting(), reason: .callAudioIdle)
+        XCTAssertNil(loop.parkedMeeting)
+        loop.parkIfEndedEarly(chromeMeeting(), reason: .callAudioIdle)
+        XCTAssertNil(loop.parkedMeeting)
     }
 
     func testParkingExpiresAfterTTLWhileTheSignalStaysUp() async {

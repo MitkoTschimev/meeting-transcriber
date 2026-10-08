@@ -122,13 +122,17 @@ class WatchLoop {
     /// instead of waiting out the poll interval.
     var endPollSleeper: Task<Void, any Error>?
     /// A meeting that was ended while its detector still reported it active
-    /// (Stop pressed, or the call went silent). Kept out of detection until
-    /// its signal actually drops *or* `parkedIdentityTTL` elapses, so the
-    /// loop does not record it again five seconds later. See
-    /// `WatchLoop+EndMeeting.swift`.
+    /// (user Stop on any app, or idle-audio on an always-on app). Kept out of
+    /// detection until its signal actually drops *or* `parkedIdentityTTL`
+    /// elapses, so the loop does not record it again five seconds later.
     var parkedMeeting: DetectedMeeting?
     /// When `parkedMeeting` was parked. `nil` iff nothing is parked.
     var parkedAt: Date?
+    /// True once either channel carried sustained call audio in this recording.
+    /// Idle-ended recordings with this still false are discarded.
+    var heardCallAudioDuringRecording = false
+    /// Set when `discardSilentIdleRecordingIfNeeded` drops a silent idle take.
+    var discardedSilentIdleRecording = false
 
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?
@@ -430,16 +434,21 @@ class WatchLoop {
         // naming dialog) because the cancellation propagated past `stop()` and
         // `enqueueRecording()`. `recorder.stop()` + `enqueueRecording()` below
         // are synchronous, so they still run to completion on the cancelled task.
+        let endReason: MeetingEndReason
         do {
-            let reason = try await waitForMeetingEnd(meeting)
-            parkIfEndedEarly(meeting, reason: reason)
+            endReason = try await waitForMeetingEnd(meeting)
+            parkIfEndedEarly(meeting, reason: endReason)
         } catch is CancellationError {
             logger.info("Watch cancelled mid-recording — finalizing in-flight recording")
+            endReason = .cancelled
         }
         endRequested = false
 
         // Stop recording
         let recording = try recorder.stop()
+        if discardSilentIdleRecordingIfNeeded(reason: endReason, recording: recording) {
+            return
+        }
 
         // --- Enqueue for background processing ---
         enqueueRecording(

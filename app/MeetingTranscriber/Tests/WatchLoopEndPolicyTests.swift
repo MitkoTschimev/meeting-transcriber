@@ -287,6 +287,23 @@ final class WatchLoopEndPolicyTests: XCTestCase {
             CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -25, micLevelDBFS: -120)),
             .heard,
         )
+        XCTAssertTrue(CallActivityPolicy.heardFromApp(CallActivitySample(appLevelDBFS: -25, micLevelDBFS: -120)))
+        XCTAssertFalse(CallActivityPolicy.heardFromApp(CallActivitySample(appLevelDBFS: -120, micLevelDBFS: -30)))
+    }
+
+    func testUnknownFallsBackToQuietAfterTimeout() {
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.unknown, unknownDuration: CallActivityPolicy.unknownQuietFallback - 1),
+            .unknown,
+        )
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.unknown, unknownDuration: CallActivityPolicy.unknownQuietFallback),
+            .quiet,
+        )
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.heard, unknownDuration: CallActivityPolicy.unknownQuietFallback),
+            .heard,
+        )
     }
 
     /// Helper: assert decision is `.continuePolling` and return the new

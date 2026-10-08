@@ -60,6 +60,13 @@ enum CallActivityPolicy {
     /// No buffer for this long means the tap has stalled, not that the far
     /// end went quiet. Quiet still delivers buffers (at -120 dBFS).
     static let appTapStallTimeout: TimeInterval = 2
+    /// Consecutive end-polls the mic must stay above `micSpeechThresholdDBFS`
+    /// before a spike (keyboard, cough, one noisy sample) counts as activity.
+    static let micSpeechSustainPolls = 2
+    /// A tap that cannot judge (watchdog gave up, stall, capture gave up)
+    /// stays `.unknown` so idle cannot fire. After this long with a quiet
+    /// mic, treat it as `.quiet` so a truly silent always-on app still ends.
+    static let unknownQuietFallback: TimeInterval = 300
 
     static func classify(_ sample: CallActivitySample) -> CallActivity {
         // Mic speech wins even when the app tap is dead: presenting while
@@ -74,6 +81,23 @@ enum CallActivityPolicy {
         if bufferAge > appTapStallTimeout { return .unknown }
         if sample.appLevelDBFS >= appAudibleThresholdDBFS { return .heard }
         return .quiet
+    }
+
+    /// App-channel speech that is safe to trust this poll. Mic-only `.heard`
+    /// still needs `micSpeechSustainPolls` before it resets the idle timer.
+    static func heardFromApp(_ sample: CallActivitySample) -> Bool {
+        if sample.appCaptureGaveUp || sample.appSilentTrackWatchdogGaveUp { return false }
+        guard let bufferAge = sample.secondsSinceLastAppBuffer, bufferAge <= appTapStallTimeout else {
+            return false
+        }
+        return sample.appLevelDBFS >= appAudibleThresholdDBFS
+    }
+
+    /// After `unknownQuietFallback` of continuous unknown, a quiet mic is
+    /// silence — not a broken tap that must run until max duration.
+    static func resolvingUnknown(_ activity: CallActivity, unknownDuration: TimeInterval) -> CallActivity {
+        if activity == .unknown, unknownDuration >= unknownQuietFallback { return .quiet }
+        return activity
     }
 }
 

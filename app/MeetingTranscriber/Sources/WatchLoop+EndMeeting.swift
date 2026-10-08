@@ -74,14 +74,19 @@ extension WatchLoop {
     /// app levels plus tap health. No recorder, or a tap that cannot judge,
     /// is `.unknown` so a broken tap never ends a meeting that may be running.
     func currentCallActivity() -> CallActivity {
-        guard let recorder = activeRecorder else { return .unknown }
-        return CallActivityPolicy.classify(CallActivitySample(
+        guard let sample = currentCallSample() else { return .unknown }
+        return CallActivityPolicy.classify(sample)
+    }
+
+    func currentCallSample() -> CallActivitySample? {
+        guard let recorder = activeRecorder else { return nil }
+        return CallActivitySample(
             appLevelDBFS: recorder.appLevelDBFS,
             micLevelDBFS: recorder.micLevelDBFS,
             appCaptureGaveUp: recorder.appCaptureGaveUp,
             appSilentTrackWatchdogGaveUp: recorder.appSilentTrackWatchdogGaveUp,
             secondsSinceLastAppBuffer: recorder.appSignalAges.secondsSinceLastBuffer,
-        ))
+        )
     }
 
     /// Identities detection skips this poll. Empty once parking has expired
@@ -98,23 +103,49 @@ extension WatchLoop {
     }
 
     /// Park a meeting that ended while its detector still reported it, so the
-    /// next poll does not record it again. Only synthesised always-on apps:
-    /// built-in clients have a real call-ended signal, and parking them would
-    /// skip a back-to-back call that starts before that signal drops.
+    /// next poll does not record it again.
+    ///
+    /// User Stop parks every app (Teams, Zoom, browsers included): the user
+    /// asked to end this recording, and restarting ~6 s later (and re-prompting
+    /// browsers) is wrong. Idle-audio parking stays limited to always-on apps
+    /// whose signal outlives the call; built-in clients drop theirs.
     func parkIfEndedEarly(_ meeting: DetectedMeeting, reason: MeetingEndReason) {
         switch reason {
-        case .userStopped, .callAudioIdle:
+        case .userStopped:
+            parkWhileStillSignalling(meeting)
+
+        case .callAudioIdle:
             guard Self.usesCallAudioIdleBackstop(meeting) else { return }
-            guard detector.isMeetingActive(meeting) else { return }
-            parkedMeeting = meeting
-            parkedAt = nowProvider()
-            logger.info(
-                "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops or \(Int(Self.parkedIdentityTTL / 60)) min pass",
-            )
+            parkWhileStillSignalling(meeting)
 
         case .signalEnded, .maxDuration, .cancelled:
             return
         }
+    }
+
+    private func parkWhileStillSignalling(_ meeting: DetectedMeeting) {
+        guard detector.isMeetingActive(meeting) else { return }
+        parkedMeeting = meeting
+        parkedAt = nowProvider()
+        logger.info(
+            "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops or \(Int(Self.parkedIdentityTTL / 60)) min pass",
+        )
+    }
+
+    /// Drop an idle-backstop recording that never heard anyone. After parking
+    /// expires, an always-on app would otherwise enqueue ~5 min of silence
+    /// every 30 min.
+    func discardSilentIdleRecordingIfNeeded(reason: MeetingEndReason, recording: RecordingResult) -> Bool {
+        guard reason == .callAudioIdle, !heardCallAudioDuringRecording else { return false }
+        logger.info("Discarding a recording that never heard any call audio")
+        discardedSilentIdleRecording = true
+        let recordingsDir = AppPaths.recordingsDir.path
+        let files = [recording.mixPath] + [recording.appPath, recording.micPath].compactMap(\.self)
+        for url in files {
+            guard url.path.hasPrefix(recordingsDir) else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+        return true
     }
 
     /// Release the parked meeting once its detector signal is gone, or the
@@ -158,10 +189,54 @@ extension WatchLoop {
 
     // MARK: - Meeting End Detection
 
+    /// Classify this poll, fall unknown back to quiet after the fallback, and
+    /// record sustained activity. Returns the activity the idle timer should see.
+    func noteCallActivity(
+        sample: CallActivitySample?,
+        now: Date,
+        unknownSince: inout Date?,
+        micSpeechPolls: inout Int,
+        lastCallAudioAt: inout Date?,
+    ) -> CallActivity {
+        var activity = sample.map(CallActivityPolicy.classify) ?? .unknown
+        if activity == .unknown {
+            let started = unknownSince ?? now
+            unknownSince = started
+            activity = CallActivityPolicy.resolvingUnknown(
+                activity,
+                unknownDuration: now.timeIntervalSince(started),
+            )
+        } else {
+            unknownSince = nil
+        }
+        switch activity {
+        case .heard:
+            if let sample, CallActivityPolicy.heardFromApp(sample) {
+                lastCallAudioAt = now
+                heardCallAudioDuringRecording = true
+                micSpeechPolls = 0
+            } else {
+                micSpeechPolls += 1
+                if micSpeechPolls >= CallActivityPolicy.micSpeechSustainPolls {
+                    lastCallAudioAt = now
+                    heardCallAudioDuringRecording = true
+                }
+            }
+
+        case .quiet, .unknown:
+            micSpeechPolls = 0
+        }
+        return activity
+    }
+
     @discardableResult
     func waitForMeetingEnd(_ meeting: DetectedMeeting) async throws -> MeetingEndReason {
         var graceStart: Date?
         var lastCallAudioAt: Date?
+        var unknownSince: Date?
+        var micSpeechPolls = 0
+        heardCallAudioDuringRecording = false
+        discardedSilentIdleRecording = false
         let startTime = nowProvider()
         let config = WatchLoopEndConfig(
             maxDuration: maxDuration,
@@ -175,14 +250,14 @@ extension WatchLoop {
                 return .userStopped
             }
             let now = nowProvider()
-            let activity = currentCallActivity()
-            switch activity {
-            case .heard:
-                lastCallAudioAt = now
-
-            case .quiet, .unknown:
-                break
-            }
+            let sample = currentCallSample()
+            let activity = noteCallActivity(
+                sample: sample,
+                now: now,
+                unknownSince: &unknownSince,
+                micSpeechPolls: &micSpeechPolls,
+                lastCallAudioAt: &lastCallAudioAt,
+            )
             let decision = WatchLoopEndPolicy.step(
                 config: config,
                 now: now,
