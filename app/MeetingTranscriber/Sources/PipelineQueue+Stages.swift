@@ -921,7 +921,7 @@ extension PipelineQueue {
     func generateProtocol(
         jobID: UUID, transcript: String, title: String, protocolsDir: URL,
     ) async {
-        guard let protocolGeneratorFactory, let generator = protocolGeneratorFactory() else {
+        guard let protocolGeneratorFactory, protocolGeneratorFactory() != nil else {
             return
         }
         let shortID = PipelineJob.shortID(for: jobID)
@@ -941,7 +941,7 @@ extension PipelineQueue {
             let diarized = transcript.range(
                 of: #"\[\w[\w\s]*\]"#, options: .regularExpression,
             ) != nil
-            protocolMD = try await generator.generate(
+            protocolMD = try await produceProtocolMarkdown(
                 transcript: transcript,
                 title: title,
                 diarized: diarized,
@@ -957,8 +957,19 @@ extension PipelineQueue {
             // and OpenAIProtocolGenerator's connection/HTTP errors) already
             // only ever carried diagnostic text. Safe to log at .public —
             // restores the visibility traded away in PR #692's 4th commit.
+            let failure = ProtocolNotesFailure.classifying(error)
             logger.warning("[\(shortID, privacy: .public)] protocol_generation_failed error=\(error.localizedDescription, privacy: .public)")
-            addWarning(id: jobID, "Protocol generation failed — transcript saved")
+            addWarning(id: jobID, failure.userMessage)
+            return
+        }
+        // Do not persist an LLM error string as the notes body. Some local
+        // servers answer 200 with "chat completion failed"; saving that plus
+        // the transcript made the Summary tab look finished.
+        if let failure = ProtocolNotesFailure.detectingSavedContent(protocolMD) {
+            logger.warning(
+                "[\(shortID, privacy: .public)] protocol_generation_failed error=\(failure.reasonLabel, privacy: .public)",
+            )
+            addWarning(id: jobID, failure.userMessage)
             return
         }
         let markdown = transcriptOutputOptions(forJobID: jobID).includeFullTranscriptInProtocol

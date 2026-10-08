@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import AppKit
 @preconcurrency import AVFoundation
 import Foundation
@@ -366,19 +367,30 @@ final class MockDiarization: DiarizationProvider, @unchecked Sendable {
 /// Mock protocol generator that captures the transcript instead of calling Claude CLI.
 class MockProtocolGen: ProtocolGenerating {
     var generateCalled = false
+    var generateCallCount = 0
     var capturedTranscript: String?
     var capturedTitle: String?
     // swiftlint:disable:next discouraged_optional_boolean
     var capturedDiarized: Bool?
     var capturedMeetingStartTime: Date?
     var shouldThrow = false
+    var errorToThrow: (any Error)?
+    var resultToReturn: String?
+    /// FIFO results for chunked retries; falls back to `resultToReturn`.
+    var resultsQueue: [String] = []
+    var capturedTranscripts: [String] = []
 
     func generate(transcript: String, title: String, diarized: Bool, meetingStartTime: Date?) throws -> String {
         generateCalled = true
+        generateCallCount += 1
         capturedTranscript = transcript
+        capturedTranscripts.append(transcript)
         capturedTitle = title
         capturedDiarized = diarized
         capturedMeetingStartTime = meetingStartTime
+        if let errorToThrow {
+            throw errorToThrow
+        }
         if shouldThrow {
             throw NSError(
                 domain: "MockProtocolGen",
@@ -386,6 +398,10 @@ class MockProtocolGen: ProtocolGenerating {
                 userInfo: [NSLocalizedDescriptionKey: "Mock protocol error"],
             )
         }
+        if !resultsQueue.isEmpty {
+            return resultsQueue.removeFirst()
+        }
+        if let resultToReturn { return resultToReturn }
         return """
         # Meeting Protocol - \(title)
         **Date:** 2026-03-06

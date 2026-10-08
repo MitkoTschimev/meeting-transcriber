@@ -36,6 +36,12 @@ final class MeetingNotesSession {
     private(set) var errorMessage: String?
     private(set) var warnings: [String] = []
     private(set) var speakerPalette = SpeakerAccent.Palette()
+    /// Set when saved notes are an LLM error (not usable Markdown) or when
+    /// generation threw and left only a warning. Distinct from `phase ==
+    /// .failed`, which is a pipeline/job error.
+    private(set) var notesFailure: ProtocolNotesFailure?
+    /// True while `retryNotes` is awaiting the protocol generator.
+    private(set) var isRetryingNotes = false
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -111,6 +117,14 @@ final class MeetingNotesSession {
 
     var hasTranscript: Bool {
         !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canRetryNotes: Bool {
+        notesFailure != nil && hasTranscript && jobID != nil && !isRetryingNotes
+    }
+
+    var transcriptLooksLong: Bool {
+        transcriptText.count > ProtocolTranscriptChunker.directCharacterLimit
     }
 
     var draftActionItems: [String] {
@@ -212,10 +226,19 @@ final class MeetingNotesSession {
     }
 
     func applyGeneratedNotes(_ markdown: String) {
-        notesMarkdown = markdown
-        if !markdown.isEmpty {
-            phase = .ready
-        }
+        adoptNotesMarkdown(markdown)
+    }
+
+    /// Re-run notes generation from the existing transcript. Progress uses
+    /// `isRetryingNotes` so Summary shows the generating placeholder without
+    /// treating a `.done` job as finished notes.
+    func retryNotes(using queue: PipelineQueue) async {
+        guard canRetryNotes, let jobID else { return }
+        isRetryingNotes = true
+        defer { isRetryingNotes = false }
+        _ = await queue.retryProtocolGeneration(jobID: jobID)
+        loadedNotesPath = nil
+        sync(from: queue)
     }
 
     /// Pull transcript / notes / phase from the pipeline once a job exists.
@@ -252,12 +275,39 @@ final class MeetingNotesSession {
         }
         if let path = job.protocolPath, path != loadedNotesPath,
            let text = Self.readFile(path) {
-            notesMarkdown = text
             loadedNotesPath = path
-            if phase != .failed { phase = .ready }
+            adoptNotesMarkdown(text)
+        } else if job.protocolPath == nil {
+            loadedNotesPath = nil
+            if notesFailure == nil {
+                notesMarkdown = nil
+            }
+        }
+        if notesMarkdown == nil, notesFailure == nil,
+           let failure = ProtocolNotesFailure.detecting(warnings: job.warnings) {
+            notesFailure = failure
+            errorMessage = failure.userMessage
         }
         if job.state == .error {
             errorMessage = job.error
+        }
+    }
+
+    /// Treat error-string "notes" as a failure so Retry appears for meetings
+    /// already saved with "chat completion failed" as the protocol body.
+    private func adoptNotesMarkdown(_ markdown: String) {
+        if let failure = ProtocolNotesFailure.detectingSavedContent(markdown) {
+            notesMarkdown = nil
+            notesFailure = failure
+            errorMessage = failure.userMessage
+            if phase != .failed { phase = .ready }
+            return
+        }
+        notesMarkdown = markdown
+        notesFailure = nil
+        if !markdown.isEmpty, phase != .failed {
+            phase = .ready
+            errorMessage = nil
         }
     }
 
@@ -345,6 +395,8 @@ final class MeetingNotesSession {
         notesMarkdown = nil
         jobID = nil
         errorMessage = nil
+        notesFailure = nil
+        isRetryingNotes = false
         warnings = []
         loadedTranscriptPath = nil
         loadedNotesPath = nil

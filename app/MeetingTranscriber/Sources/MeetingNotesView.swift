@@ -270,31 +270,45 @@ struct MeetingNotesView: View {
         let palette = session.palette(for: turns, micLabel: micLabel)
         let mentions = SpeakerMentionText.mentions(from: turns, palette: palette, micLabel: micLabel)
         return ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if !session.warnings.isEmpty {
-                    ForEach(session.warnings, id: \.self) { warning in
-                        Text(warning)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if session.phase == .generatingNotes {
-                    NotesGeneratingPlaceholder(style: settings.protocolStyle)
-                } else if let notes = session.notesMarkdown, !notes.isEmpty {
-                    SpeakerMentionText(markdown: notes, mentions: mentions)
-                } else if session.phase == .failed {
-                    Text(session.errorMessage ?? "Notes could not be generated. The transcript was saved.")
-                        .foregroundStyle(.red)
-                } else {
-                    draftOrWaiting(mentions: mentions)
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-            .padding(.bottom, 32)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            summaryContent(mentions: mentions)
+                .padding(.horizontal, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier(A11yID.meetingNotesSummary)
+    }
+
+    private func summaryContent(mentions: [SpeakerMentionText.Mention]) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if session.notesFailure == nil, !session.warnings.isEmpty {
+                ForEach(session.warnings, id: \.self) { warning in
+                    Text(warning)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if session.phase == .generatingNotes || session.isRetryingNotes {
+                NotesGeneratingPlaceholder(style: settings.protocolStyle)
+            } else if let failure = session.notesFailure {
+                MeetingNotesSummaryFailure(
+                    message: session.errorMessage ?? failure.userMessage,
+                    hint: session.transcriptLooksLong
+                        ? MeetingNotesSummaryFailure.longTranscriptHint
+                        : nil,
+                    retryEnabled: session.canRetryNotes,
+                ) {
+                    Task { await session.retryNotes(using: queue) }
+                }
+            } else if let notes = session.notesMarkdown, !notes.isEmpty {
+                SpeakerMentionText(markdown: notes, mentions: mentions)
+            } else if session.phase == .failed {
+                Text(session.errorMessage ?? "Notes could not be generated. The transcript was saved.")
+                    .foregroundStyle(.red)
+            } else {
+                draftOrWaiting(mentions: mentions)
+            }
+        }
     }
 
     @ViewBuilder
