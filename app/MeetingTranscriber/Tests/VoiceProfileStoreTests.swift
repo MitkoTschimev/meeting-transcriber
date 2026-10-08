@@ -1,0 +1,58 @@
+@testable import MeetingTranscriber
+import XCTest
+
+/// Live naming writes the same on-device `speakers.json` the batch pipeline
+/// and Settings → Speakers use.
+@MainActor
+final class VoiceProfileStoreTests: XCTestCase { // swiftlint:disable:this balanced_xctest_lifecycle
+    // swiftlint:disable implicitly_unwrapped_optional
+    private var dbPath: URL!
+    // swiftlint:enable implicitly_unwrapped_optional
+
+    override func setUp() async throws {
+        try await super.setUp()
+        dbPath = try makeTempDirectory(prefix: "VoiceProfileStoreTests").appendingPathComponent("speakers.json")
+    }
+
+    func testEnrollCreatesAProfileTheMatcherRecognises() {
+        var changes = 0
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath) { changes += 1 }
+
+        store.enroll(VoiceEnrollment(name: "Alice", embedding: [1, 0, 0], speakingTime: 5))
+
+        let stored = SpeakerMatcher(dbPath: dbPath).loadDB()
+        XCTAssertEqual(stored.map(\.name), ["Alice"])
+        XCTAssertEqual(stored.first?.centroid, [1, 0, 0])
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(store.savedVoiceNames(), ["Alice"])
+    }
+
+    func testEnrollFoldsACorrectionIntoTheExistingProfile() throws {
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        store.enroll(VoiceEnrollment(name: "Alice", embedding: [1, 0, 0], speakingTime: 5))
+        store.enroll(VoiceEnrollment(name: "Alice", embedding: [0, 1, 0], speakingTime: 5))
+
+        let alice = try XCTUnwrap(SpeakerMatcher(dbPath: dbPath).loadDB().first)
+        XCTAssertEqual(alice.centroidSampleCount, 2)
+        XCTAssertEqual(alice.embeddings.count, 2)
+        XCTAssertEqual(alice.useCount, 2)
+    }
+
+    func testEmptyEmbeddingIsIgnored() {
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        store.enroll(VoiceEnrollment(name: "Alice", embedding: [], speakingTime: 5))
+        XCTAssertTrue(SpeakerMatcher(dbPath: dbPath).loadDB().isEmpty)
+    }
+
+    func testSavedNamesAreMostRecentFirstAndSkipSeededEntries() {
+        let matcher = SpeakerMatcher(dbPath: dbPath)
+        let old = Date(timeIntervalSince1970: 1_700_000_000)
+        matcher.saveDB([
+            StoredSpeaker(name: "Old", embeddings: [[1, 0]], lastUsed: old, useCount: 1),
+            StoredSpeaker(name: "Seeded", embeddings: [[0, 1]], lastUsed: Date(), useCount: 1, isSynthetic: true),
+            StoredSpeaker(name: "Recent", embeddings: [[1, 1]], lastUsed: old.addingTimeInterval(3600), useCount: 1),
+        ])
+
+        XCTAssertEqual(SpeakerDBVoiceProfileStore(dbPath: dbPath).savedVoiceNames(), ["Recent", "Old"])
+    }
+}

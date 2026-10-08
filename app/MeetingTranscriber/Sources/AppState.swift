@@ -166,6 +166,7 @@ final class AppState {
     /// Distinct from `liveCaptions`, which only keeps two overlay lines.
     let meetingNotes: MeetingNotesSession = .init(
         thoughtsStore: MeetingThoughtsStore(directory: AppPaths.thoughtsDir),
+        voiceProfiles: SpeakerDBVoiceProfileStore(),
     )
 
     /// Apple + Google calendar connections and today's upcoming events.

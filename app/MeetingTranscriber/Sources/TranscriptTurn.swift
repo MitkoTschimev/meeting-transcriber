@@ -6,6 +6,9 @@ import Foundation
 struct TranscriptTurn: Equatable, Identifiable {
     let id: Int
     let speakerRaw: String
+    /// Session voice behind a live turn (`LiveSpeakerRoster`), nil for
+    /// pipeline turns and hypotheses. What the naming menu renames.
+    var speakerID: Int?
     let isYou: Bool
     let paragraphs: [String]
     let isHypothesis: Bool
@@ -18,6 +21,7 @@ struct TranscriptTurn: Equatable, Identifiable {
         hypothesisApp: String,
         pipelineTranscript: String?,
         micLabel: String,
+        notYouSpeakerIDs: Set<Int> = [],
     ) -> [Self] {
         if let pipelineTranscript {
             let trimmed = pipelineTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -30,6 +34,7 @@ struct TranscriptTurn: Equatable, Identifiable {
             hypothesisMic: hypothesisMic,
             hypothesisApp: hypothesisApp,
             micLabel: micLabel,
+            notYouSpeakerIDs: notYouSpeakerIDs,
         )
     }
 
@@ -59,18 +64,23 @@ struct TranscriptTurn: Equatable, Identifiable {
         hypothesisMic: String,
         hypothesisApp: String,
         micLabel: String,
+        notYouSpeakerIDs: Set<Int>,
     ) -> [Self] {
         var turns: [Self] = []
         for line in lines {
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
-            let isYou = line.channel == .mic || SpeakerAccent.isYou(line.speaker, micLabel: micLabel)
+            // A mic voice the user named as someone else (a colleague in the
+            // room) is not "You", whatever channel it came in on.
+            let namedAsOther = line.speakerID.map { notYouSpeakerIDs.contains($0) } ?? false
+            let isYou = (line.channel == .mic && !namedAsOther) || SpeakerAccent.isYou(line.speaker, micLabel: micLabel)
             append(
                 speakerRaw: line.speaker,
                 isYou: isYou,
                 text: text,
                 isHypothesis: false,
                 onto: &turns,
+                speakerID: line.speakerID,
             )
         }
         let remote = hypothesisApp.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -141,14 +151,17 @@ struct TranscriptTurn: Equatable, Identifiable {
         text: String,
         isHypothesis: Bool,
         onto turns: inout [Self],
+        speakerID: Int? = nil,
     ) {
         if let last = turns.last,
            !last.speakerRaw.isEmpty,
            !last.isHypothesis, !isHypothesis,
-           last.speakerRaw == speakerRaw, last.isYou == isYou {
+           last.speakerRaw == speakerRaw, last.isYou == isYou,
+           last.speakerID == speakerID {
             let merged = Self(
                 id: last.id,
                 speakerRaw: last.speakerRaw,
+                speakerID: last.speakerID,
                 isYou: last.isYou,
                 paragraphs: last.paragraphs + [text],
                 isHypothesis: false,
@@ -159,6 +172,7 @@ struct TranscriptTurn: Equatable, Identifiable {
         turns.append(Self(
             id: turns.count,
             speakerRaw: speakerRaw,
+            speakerID: speakerID,
             isYou: isYou,
             paragraphs: [text],
             isHypothesis: isHypothesis,

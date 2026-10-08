@@ -453,9 +453,14 @@ final class LiveTranscriptionController {
                     if self.verboseDiagnostics() {
                         logger.info("[\(logChannel, privacy: .public)] final: \(text, privacy: .private)")
                     }
-                    let matched = await self.speakerMatcher.match(audio: audio)
-                    let speaker = matched ?? self.captions.label(for: channel)
-                    self.captions.applyFinalized(text, channel: channel, speaker: speaker)
+                    // Embedding + profile match → session voice ("Speaker 2",
+                    // or a saved/user-given name) so naming one voice in the
+                    // notes window relabels all of its lines.
+                    let sample = await self.speakerMatcher.identify(audio: audio)
+                    let resolved = self.captions.resolveSpeaker(sample, channel: channel)
+                    self.captions.applyFinalized(
+                        text, channel: channel, speaker: resolved.label, speakerID: resolved.speakerID,
+                    )
                 }
             }
         }

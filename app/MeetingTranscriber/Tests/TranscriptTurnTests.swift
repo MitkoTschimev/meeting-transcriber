@@ -25,6 +25,40 @@ final class TranscriptTurnTests: XCTestCase {
         XCTAssertTrue(turns[2].isYou)
     }
 
+    func testLiveTurnsCarryTheirVoiceAndOnlyMergeWithinOneVoice() {
+        let lines = [
+            LiveCaptionLine(channel: .app, text: "One.", speaker: "Remote", speakerID: 1),
+            LiveCaptionLine(channel: .app, text: "Two.", speaker: "Remote", speakerID: 1),
+            LiveCaptionLine(channel: .app, text: "Three.", speaker: "Remote", speakerID: 2),
+        ]
+        let turns = TranscriptTurn.build(
+            liveLines: lines,
+            hypothesisMic: "",
+            hypothesisApp: "",
+            pipelineTranscript: nil,
+            micLabel: "Me",
+        )
+        XCTAssertEqual(turns.map(\.speakerID), [1, 2])
+        XCTAssertEqual(turns[0].paragraphs, ["One.", "Two."])
+    }
+
+    func testMicVoiceNamedAsSomeoneElseIsNotYou() {
+        let lines = [
+            LiveCaptionLine(channel: .mic, text: "Mine.", speaker: "Me", speakerID: 0),
+            LiveCaptionLine(channel: .mic, text: "Theirs.", speaker: "Bob", speakerID: 3),
+        ]
+        let turns = TranscriptTurn.build(
+            liveLines: lines,
+            hypothesisMic: "",
+            hypothesisApp: "",
+            pipelineTranscript: nil,
+            micLabel: "Me",
+            notYouSpeakerIDs: [3],
+        )
+        XCTAssertTrue(turns[0].isYou)
+        XCTAssertFalse(turns[1].isYou)
+    }
+
     func testMicChannelIsYouEvenWhenMatcherNamedTheVoice() {
         let lines = [
             LiveCaptionLine(channel: .mic, text: "Hello.", speaker: "Mitko"),

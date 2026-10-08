@@ -42,6 +42,16 @@ final class MeetingNotesSession {
     private(set) var notesFailure: ProtocolNotesFailure?
     /// True while `retryNotes` is awaiting the protocol generator.
     private(set) var isRetryingNotes = false
+    /// Voices heard in this session; naming one relabels all of its lines
+    /// and teaches the saved voice profiles. Reset with every new session.
+    private(set) var speakerRoster = LiveSpeakerRoster()
+    /// Saved voice names offered when naming a speaker, most recent first.
+    private(set) var savedVoiceNames: [String] = []
+    /// Saved voice profiles (`speakers.json` in production). nil in tests that
+    /// do not exercise naming, and then naming is session-only.
+    @ObservationIgnored var voiceProfiles: (any VoiceProfileStoring)? {
+        didSet { refreshSavedVoices() }
+    }
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -76,10 +86,13 @@ final class MeetingNotesSession {
     init(
         thoughtsStore: MeetingThoughtsStore? = nil,
         persistDelay: Duration = .milliseconds(400),
+        voiceProfiles: (any VoiceProfileStoring)? = nil,
     ) {
         self.thoughtsStore = thoughtsStore
         self.persistDelay = persistDelay
+        self.voiceProfiles = voiceProfiles
         thoughtsStore?.pruneInProgress()
+        refreshSavedVoices()
     }
 
     func setMicLabel(_ label: String) {
@@ -138,7 +151,66 @@ final class MeetingNotesSession {
             hypothesisApp: hypothesisApp,
             pipelineTranscript: pipelineTranscript,
             micLabel: micLabel,
+            notYouSpeakerIDs: speakerRoster.notYouSpeakerIDs,
         )
+    }
+
+    // MARK: - Live speaker naming
+
+    /// Whether the transcript on screen is the live one, whose speakers can
+    /// be named. Once the pipeline transcript replaces it, diarized names win
+    /// and naming moves to the post-meeting dialog.
+    var canNameLiveSpeakers: Bool {
+        pipelineTranscript == nil && !speakerRoster.speakers.isEmpty
+    }
+
+    /// The voice of the most recent finalized line, for the "speaking now"
+    /// highlight.
+    var lastLiveSpeakerID: Int? {
+        lines.last { $0.speakerID != nil }?.speakerID
+    }
+
+    /// Attach a finalized utterance to a session voice (see
+    /// `LiveCaptionsState.resolveSpeaker`). A later profile match that names
+    /// an earlier "Speaker N" relabels that voice's earlier lines too.
+    func resolveLiveSpeaker(
+        _ sample: LiveSpeakerSample?,
+        channel: LiveCaptionChannel,
+        fallbackLabel: String,
+    ) -> LiveSpeakerRoster.Resolution {
+        if phase == .idle { begin(title: "Meeting", appName: "") }
+        let resolution = speakerRoster.resolve(sample, channel: channel, fallbackLabel: fallbackLabel)
+        if let relabeled = resolution.relabeledSpeakerID {
+            relabelLines(ids: [relabeled], toID: relabeled, label: resolution.label)
+        }
+        return resolution
+    }
+
+    /// Name (or rename) a session voice: every line of that voice takes the
+    /// name now, later lines arrive with it, and the voice is saved so future
+    /// meetings recognise it. Naming it after another voice in this session
+    /// merges the two.
+    func renameLiveSpeaker(id: Int, to name: String) {
+        guard let outcome = speakerRoster.rename(id: id, to: name, micLabel: micLabel) else { return }
+        relabelLines(ids: Set(outcome.affectedIDs), toID: outcome.speakerID, label: outcome.label)
+        let isYou = speakerRoster.speaker(id: outcome.speakerID)?.isYou ?? false
+        registerSpeaker(outcome.label, isYou: isYou)
+        if let enrollment = outcome.enrollment, let voiceProfiles {
+            voiceProfiles.enroll(enrollment)
+            refreshSavedVoices()
+        }
+    }
+
+    func refreshSavedVoices() {
+        let names = voiceProfiles?.savedVoiceNames() ?? []
+        if names != savedVoiceNames { savedVoiceNames = names }
+    }
+
+    private func relabelLines(ids: Set<Int>, toID: Int, label: String) {
+        lines = lines.map { line in
+            guard let id = line.speakerID, ids.contains(id) else { return line }
+            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
+        }
     }
 
     /// Append-only palette so live→diarized handoff keeps first-seen colors.
@@ -213,7 +285,7 @@ final class MeetingNotesSession {
         }
     }
 
-    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String) {
+    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String, speakerID: Int? = nil) {
         if phase == .idle { begin(title: "Meeting", appName: "") }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -221,8 +293,9 @@ final class MeetingNotesSession {
         case .mic: hypothesisMic = ""
         case .app: hypothesisApp = ""
         }
-        lines.append(LiveCaptionLine(channel: channel, text: trimmed, speaker: speaker))
-        registerSpeaker(speaker, isYou: channel == .mic)
+        lines.append(LiveCaptionLine(channel: channel, text: trimmed, speaker: speaker, speakerID: speakerID))
+        let isYou = speakerID.map { !speakerRoster.notYouSpeakerIDs.contains($0) } ?? true
+        registerSpeaker(speaker, isYou: channel == .mic && isYou)
     }
 
     func applyGeneratedNotes(_ markdown: String) {
@@ -403,6 +476,8 @@ final class MeetingNotesSession {
         thoughts = ""
         thoughtsURL = nil
         speakerPalette = SpeakerAccent.Palette()
+        speakerRoster = LiveSpeakerRoster()
+        refreshSavedVoices()
         didAutoOpenWindow = false
         isLoadingThoughts = false
     }
