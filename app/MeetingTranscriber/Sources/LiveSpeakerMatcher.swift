@@ -14,6 +14,23 @@ protocol LiveSpeakerMatching: Sendable {
     /// Returns a matched speaker name, or `nil` if no enrolled voice
     /// passes the matcher's threshold + confidence margin.
     func match(audio: [Float]) async -> String?
+    /// The utterance's embedding plus its saved-profile match, so the live
+    /// transcript can group utterances into session voices and the user can
+    /// name them. `nil` when no embedding could be produced.
+    func identify(audio: [Float]) async -> LiveSpeakerSample?
+}
+
+extension LiveSpeakerMatching {
+    /// Fallback for matchers that only name: no embedding, so the caller
+    /// cannot cluster and keeps the per-utterance name.
+    func identify(audio: [Float]) async -> LiveSpeakerSample? {
+        guard let name = await match(audio: audio) else { return nil }
+        return LiveSpeakerSample(
+            embedding: [],
+            matchedName: name,
+            duration: Double(audio.count) / LiveSpeakerMatcher.sampleRate,
+        )
+    }
 }
 
 /// Live speaker matching for the caption overlay. Given the speech samples
@@ -44,6 +61,9 @@ protocol LiveSpeakerMatching: Sendable {
 /// `ModelNames.Diarizer.segmentationFile` so a FluidAudio model rename
 /// (the likely failure mode) invalidates the cache automatically.
 actor LiveSpeakerMatcher: LiveSpeakerMatching {
+    /// Live utterance audio is 16 kHz mono (the extractor's native rate).
+    nonisolated static let sampleRate: Double = 16000
+
     /// `UserDefaults` key for the cached WeSpeaker mask frame count.
     /// Includes the FluidAudio segmentation model filename so a rename
     /// (e.g. `pyannote_segmentation` → `pyannote_segmentation_v4`)
@@ -145,6 +165,13 @@ actor LiveSpeakerMatcher: LiveSpeakerMatching {
     /// a transient inference failure degrades to "unknown speaker" rather
     /// than blocking the caption.
     func match(audio: [Float]) async -> String? {
+        await identify(audio: audio)?.matchedName
+    }
+
+    /// Embedding + saved-profile match for one utterance. Same model, same
+    /// threshold and margin as `match(audio:)`; the embedding additionally
+    /// lets the live transcript group the session's voices.
+    func identify(audio: [Float]) async -> LiveSpeakerSample? {
         do {
             try await prepare()
         } catch {
@@ -177,8 +204,12 @@ actor LiveSpeakerMatcher: LiveSpeakerMatching {
         // user-chosen name in `speakers.json`.
         let sentinel = UUID().uuidString
         let result = speakerMatcher.match(embeddings: [sentinel: embedding])
-        guard let name = result[sentinel], name != sentinel else { return nil }
-        return name
+        let matched = result[sentinel].flatMap { $0 == sentinel ? nil : $0 }
+        return LiveSpeakerSample(
+            embedding: embedding,
+            matchedName: matched,
+            duration: Double(audio.count) / Self.sampleRate,
+        )
     }
 
     private func loadModels() async throws -> LoadedModels {

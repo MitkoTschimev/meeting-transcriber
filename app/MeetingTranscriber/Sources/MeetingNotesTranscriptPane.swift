@@ -13,15 +13,33 @@ struct MeetingNotesTranscriptPane: View {
     let liveTranscriptionEnabled: Bool
     let phase: MeetingNotesPhase
     let emptyHint: String
+    /// Live speaker naming. nil once the pipeline transcript is shown (or
+    /// with no live voices yet): names are then plain text.
+    var naming: LiveSpeakerNaming?
 
     var body: some View {
+        LiveSpeakerNameAlertHost(naming: naming) { requestNewName in
+            scrollContent(requestNewName: requestNewName)
+        }
+        .accessibilityIdentifier(A11yID.meetingNotesTranscript)
+    }
+
+    private func scrollContent(requestNewName: @escaping (Int) -> Void) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if !turns.isEmpty {
                         chrome
+                        if let naming {
+                            LiveSpeakerChipsBar(
+                                naming: naming,
+                                palette: palette,
+                                micLabel: micLabel,
+                                requestNewName: requestNewName,
+                            )
+                        }
                         ForEach(turns) { turn in
-                            turnBlock(turn)
+                            turnBlock(turn, requestNewName: requestNewName)
                         }
                         Color.clear.frame(height: 1).id("transcript-end")
                     } else {
@@ -37,7 +55,6 @@ struct MeetingNotesTranscriptPane: View {
                 proxy.scrollTo("transcript-end", anchor: .bottom)
             }
         }
-        .accessibilityIdentifier(A11yID.meetingNotesTranscript)
     }
 
     @ViewBuilder private var chrome: some View {
@@ -64,15 +81,12 @@ struct MeetingNotesTranscriptPane: View {
         return max(0, (endedAt ?? now).timeIntervalSince(startedAt))
     }
 
-    private func turnBlock(_ turn: TranscriptTurn) -> some View {
+    private func turnBlock(_ turn: TranscriptTurn, requestNewName: @escaping (Int) -> Void) -> some View {
         let key = SpeakerAccent.identityKey(turn.speakerRaw, micLabel: micLabel, isYou: turn.isYou)
         let color = palette.color(forKey: key, isYou: turn.isYou)
         return VStack(alignment: .leading, spacing: 6) {
             if !turn.speakerRaw.isEmpty {
-                Text(SpeakerAccent.displayName(turn.speakerRaw, micLabel: micLabel, isYou: turn.isYou))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(color)
+                speakerName(turn, color: color, requestNewName: requestNewName)
             }
             ForEach(Array(turn.paragraphs.enumerated()), id: \.offset) { _, paragraph in
                 Text(paragraph)
@@ -83,6 +97,30 @@ struct MeetingNotesTranscriptPane: View {
             }
         }
         .opacity(turn.isHypothesis ? 0.75 : 1)
+    }
+
+    /// A live turn's name opens the naming menu; anything else stays text.
+    @ViewBuilder
+    private func speakerName(
+        _ turn: TranscriptTurn,
+        color: Color,
+        requestNewName: @escaping (Int) -> Void,
+    ) -> some View {
+        let title = SpeakerAccent.displayName(turn.speakerRaw, micLabel: micLabel, isYou: turn.isYou)
+        if let naming, let speakerID = turn.speakerID, !turn.isHypothesis {
+            LiveSpeakerMenu(
+                naming: naming,
+                speakerID: speakerID,
+                title: title,
+                color: color,
+                requestNewName: requestNewName,
+            )
+        } else {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(color)
+        }
     }
 
     private var empty: some View {

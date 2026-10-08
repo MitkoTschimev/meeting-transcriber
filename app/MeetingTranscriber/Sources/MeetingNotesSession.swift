@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -42,6 +43,28 @@ final class MeetingNotesSession {
     private(set) var notesFailure: ProtocolNotesFailure?
     /// True while `retryNotes` is awaiting the protocol generator.
     private(set) var isRetryingNotes = false
+    /// Voices heard in this session; naming one relabels all of its lines
+    /// and teaches the saved voice profiles. Reset with every new session.
+    var speakerRoster = LiveSpeakerRoster()
+    /// Saved voice names offered when naming a speaker, most recent first.
+    var savedVoiceNames: [String] = []
+    /// Saved voice profiles (`speakers.json` in production). nil in tests that
+    /// do not exercise naming, and then naming is session-only.
+    @ObservationIgnored var voiceProfiles: (any VoiceProfileStoring)? {
+        didSet { refreshSavedVoices() }
+    }
+
+    /// Overlay buffer that mirrors live lines. Relabel after a naming so the
+    /// caption bar does not keep the old "Speaker N".
+    @ObservationIgnored var onSpeakerRelabel: ((Set<Int>, Int, String) -> Void)?
+    /// True once this session's named voices have been written. A later
+    /// `retireLiveRoster` (pipeline transcript, next `begin`, quit) is a no-op.
+    var didEnrollNamedVoices = false
+    /// Names already written at Stop, keyed by session speaker id. Retire
+    /// enrolls only names added after Stop. A correction renames the stored
+    /// profile only when this meeting created it; otherwise it enrolls under
+    /// the new name and withdraws this meeting's sample from the old one.
+    var enrolledAtStop: [Int: LiveStopEnrollment] = [:]
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -62,7 +85,7 @@ final class MeetingNotesSession {
     private var isLoadingThoughts = false
     private var persistTask: Task<Void, Never>?
     private let persistDelay: Duration
-    private var micLabel: String = ""
+    var micLabel: String = ""
 
     /// Whether this recording episode already asked the scene to show the
     /// notes window. Reset when `begin` starts a new session, not when a
@@ -76,10 +99,26 @@ final class MeetingNotesSession {
     init(
         thoughtsStore: MeetingThoughtsStore? = nil,
         persistDelay: Duration = .milliseconds(400),
+        voiceProfiles: (any VoiceProfileStoring)? = nil,
     ) {
         self.thoughtsStore = thoughtsStore
         self.persistDelay = persistDelay
+        self.voiceProfiles = voiceProfiles
         thoughtsStore?.pruneInProgress()
+        refreshSavedVoices()
+        // Names given after Stop live on the roster until it is retired.
+        // Quit has no next `begin` and may never adopt a pipeline transcript
+        // (record-only), so flush here. The session lives for the process.
+        // swiftlint:disable:next discarded_notification_center_observer
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.retireLiveRoster()
+            }
+        }
     }
 
     func setMicLabel(_ label: String) {
@@ -138,6 +177,7 @@ final class MeetingNotesSession {
             hypothesisApp: hypothesisApp,
             pipelineTranscript: pipelineTranscript,
             micLabel: micLabel,
+            notYouSpeakerIDs: speakerRoster.notYouSpeakerIDs,
         )
     }
 
@@ -197,6 +237,9 @@ final class MeetingNotesSession {
     func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
         persistThoughtsNow()
+        // Names known now must be in speakers.json before the pipeline's
+        // matchVerbose (which runs before the transcript is adopted).
+        enrollLiveNamesKnownNow()
         endedAt = Date()
         hypothesisMic = ""
         hypothesisApp = ""
@@ -213,7 +256,7 @@ final class MeetingNotesSession {
         }
     }
 
-    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String) {
+    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String, speakerID: Int? = nil) {
         if phase == .idle { begin(title: "Meeting", appName: "") }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -221,8 +264,9 @@ final class MeetingNotesSession {
         case .mic: hypothesisMic = ""
         case .app: hypothesisApp = ""
         }
-        lines.append(LiveCaptionLine(channel: channel, text: trimmed, speaker: speaker))
-        registerSpeaker(speaker, isYou: channel == .mic)
+        lines.append(LiveCaptionLine(channel: channel, text: trimmed, speaker: speaker, speakerID: speakerID))
+        let isYou = speakerID.map { !speakerRoster.notYouSpeakerIDs.contains($0) } ?? true
+        registerSpeaker(speaker, isYou: channel == .mic && isYou)
     }
 
     func applyGeneratedNotes(_ markdown: String) {
@@ -271,6 +315,7 @@ final class MeetingNotesSession {
            let text = Self.readFile(path) {
             pipelineTranscript = text
             loadedTranscriptPath = path
+            retireLiveRoster()
             rememberPipelineSpeakers(text)
         }
         if let path = job.protocolPath, path != loadedNotesPath,
@@ -371,7 +416,15 @@ final class MeetingNotesSession {
         }
     }
 
-    private func registerSpeaker(_ raw: String, isYou: Bool) {
+    func relabelLines(ids: Set<Int>, toID: Int, label: String) {
+        lines = lines.map { line in
+            guard let id = line.speakerID, ids.contains(id) else { return line }
+            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
+        }
+        onSpeakerRelabel?(ids, toID, label)
+    }
+
+    func registerSpeaker(_ raw: String, isYou: Bool) {
         speakerPalette.register(SpeakerAccent.identityKey(raw, micLabel: micLabel, isYou: isYou))
     }
 
@@ -385,6 +438,7 @@ final class MeetingNotesSession {
     }
 
     private func resetContents() {
+        retireLiveRoster()
         persistTask?.cancel()
         persistTask = nil
         isLoadingThoughts = true
@@ -403,6 +457,10 @@ final class MeetingNotesSession {
         thoughts = ""
         thoughtsURL = nil
         speakerPalette = SpeakerAccent.Palette()
+        speakerRoster = LiveSpeakerRoster()
+        didEnrollNamedVoices = false
+        enrolledAtStop = [:]
+        refreshSavedVoices()
         didAutoOpenWindow = false
         isLoadingThoughts = false
     }

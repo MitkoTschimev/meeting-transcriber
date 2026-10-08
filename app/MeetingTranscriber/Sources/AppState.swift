@@ -166,6 +166,7 @@ final class AppState {
     /// Distinct from `liveCaptions`, which only keeps two overlay lines.
     let meetingNotes: MeetingNotesSession = .init(
         thoughtsStore: MeetingThoughtsStore(directory: AppPaths.thoughtsDir),
+        voiceProfiles: SpeakerDBVoiceProfileStore(),
     )
 
     /// Apple + Google calendar connections and today's upcoming events.
@@ -271,7 +272,7 @@ final class AppState {
             meetingNotes: meetingNotes,
         ) { [weak calendar] date in calendar?.eventOverlapping(at: date) }
 
-        liveCaptions.notes = meetingNotes
+        liveCaptions.attachNotes(meetingNotes)
 
         #if !APPSTORE
             // Not trailing-closure: `isEnabled` is the first param (the other two

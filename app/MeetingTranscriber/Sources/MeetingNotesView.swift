@@ -95,6 +95,7 @@ struct MeetingNotesView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             session.setMicLabel(micLabel)
+            session.refreshSavedVoices()
             session.sync(from: queue)
         }
         .onChange(of: jobSignature) { _, _ in
@@ -280,7 +281,26 @@ struct MeetingNotesView: View {
             emptyHint: liveTranscriptionEnabled
                 ? "Listening… the transcript appears here as people speak."
                 : Self.liveTranscriptionHint,
+            naming: liveSpeakerNaming,
         )
+    }
+
+    /// Naming for the live transcript's voices, or nil when there is nothing
+    /// to name (no live voices, or the pipeline transcript took over).
+    private var liveSpeakerNaming: LiveSpeakerNaming? {
+        guard session.canNameLiveSpeakers else { return nil }
+        let notes: MeetingNotesSession = session
+        let pipelineQueue: PipelineQueue = queue
+        return LiveSpeakerNaming(
+            speakers: notes.speakerRoster.speakers,
+            savedVoiceNames: notes.savedVoiceNames,
+            speakingNowID: notes.phase == .recording ? notes.lastLiveSpeakerID : nil,
+            micLabel: micLabel,
+        ) { id, name in
+            notes.renameLiveSpeaker(id: id, to: name)
+            // Same cache invalidation KnownVoices does after a DB edit.
+            pipelineQueue.refreshKnownSpeakerNames()
+        }
     }
 
     private var summaryPane: some View {

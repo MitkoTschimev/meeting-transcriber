@@ -141,6 +141,9 @@ class WatchLoop {
 
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?
+    /// Called after the recorder stops, before the pipeline job is queued, so
+    /// live-named voices are in `speakers.json` when `matchVerbose` runs.
+    var beforeEnqueueRecording: (() -> Void)?
 
     init(
         detector: any MeetingDetecting = WatchLoop.defaultDetector(),
@@ -474,6 +477,7 @@ class WatchLoop {
         trigger: RecordingSidecar.Trigger,
         participants: [String] = [],
     ) {
+        beforeEnqueueRecording?()
         if recordOnly() {
             do {
                 try writeRecordOnlySidecar(

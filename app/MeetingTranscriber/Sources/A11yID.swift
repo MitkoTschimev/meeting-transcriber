@@ -124,6 +124,8 @@ enum A11yID {
         "known-less-\(speakerLabel)"
     }
 
+    static let knownVoicesCorruptBanner = "knownVoicesCorruptBanner"
+
     // Live captions overlay.
     static let liveCaptionBackend = "liveCaptionBackend"
 
@@ -146,6 +148,12 @@ enum A11yID {
     static let meetingNotesStopButton = "meetingNotesStopButton"
     static let meetingNotesConfirmStopButton = "meetingNotesConfirmStopButton"
     static let meetingNotesKeepRecordingButton = "meetingNotesKeepRecordingButton"
+    static func meetingNotesSpeakerMenu(_ speakerID: Int) -> String {
+        "meetingNotesSpeakerMenu-\(speakerID)"
+    }
+
+    static let meetingNotesSpeakerChips = "meetingNotesSpeakerChips"
+    static let meetingNotesNewSpeakerName = "meetingNotesNewSpeakerName"
     static let autoOpenMeetingNotesToggle = "autoOpenMeetingNotesToggle"
     static let meetingNotesSummaryError = "meetingNotesSummaryError"
     static let meetingNotesRetryButton = "meetingNotesRetryButton"

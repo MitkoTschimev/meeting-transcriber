@@ -24,6 +24,11 @@ struct LiveCaptionLine: Hashable, Codable {
     let channel: LiveCaptionChannel
     let text: String
     let speaker: String
+    /// Session voice (`LiveSpeakerRoster`) this line belongs to, so naming a
+    /// speaker relabels all of their lines. nil when no embedding was
+    /// available; such lines keep their label. Omitted from the RPC JSON
+    /// when nil.
+    var speakerID: Int?
 }
 
 /// Observable state powering the live caption-bar overlay.
@@ -55,6 +60,15 @@ final class LiveCaptionsState {
     /// and must not wipe the session. Observation-ignored: this is a sink, not
     /// overlay display state.
     @ObservationIgnored weak var notes: MeetingNotesSession?
+
+    /// Forwards finals into the notes session and keeps overlay lines in
+    /// step when a voice is named there.
+    func attachNotes(_ session: MeetingNotesSession) {
+        notes = session
+        session.onSpeakerRelabel = { [weak self] ids, toID, label in
+            self?.relabelRecentFinals(ids: ids, toID: toID, label: label)
+        }
+    }
 
     init(micLabel: String = "Me", appLabel: String = "Remote") {
         self.micLabel = micLabel
@@ -119,18 +133,38 @@ final class LiveCaptionsState {
         notes?.applyPartial(text, channel: channel)
     }
 
-    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String) {
+    func applyFinalized(_ text: String, channel: LiveCaptionChannel, speaker: String, speakerID: Int? = nil) {
         switch channel {
         case .mic: hypothesisMic = ""
         case .app: hypothesisApp = ""
         }
-        recentFinals.append(LiveCaptionLine(channel: channel, text: text, speaker: speaker))
+        recentFinals.append(LiveCaptionLine(channel: channel, text: text, speaker: speaker, speakerID: speakerID))
         if recentFinals.count > Self.maxFinalsKept {
             recentFinals.removeFirst(recentFinals.count - Self.maxFinalsKept)
         }
         lastEventAt = Date()
         scheduleAutoClear()
-        notes?.applyFinalized(text, channel: channel, speaker: speaker)
+        notes?.applyFinalized(text, channel: channel, speaker: speaker, speakerID: speakerID)
+    }
+
+    /// Keep overlay lines in step when a session voice is named. `speaker` is
+    /// otherwise captured at finalize time and would keep showing "Speaker N".
+    func relabelRecentFinals(ids: Set<Int>, toID: Int, label: String) {
+        recentFinals = recentFinals.map { line in
+            guard let id = line.speakerID, ids.contains(id) else { return line }
+            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
+        }
+    }
+
+    /// Attach a finalized utterance to a session voice and return the label
+    /// to show. The notes session owns the voices (they are per meeting and
+    /// the user names them there); without one this keeps the old behaviour:
+    /// the profile match, else the channel default.
+    func resolveSpeaker(_ sample: LiveSpeakerSample?, channel: LiveCaptionChannel) -> LiveSpeakerRoster.Resolution {
+        if let notes {
+            return notes.resolveLiveSpeaker(sample, channel: channel, fallbackLabel: label(for: channel))
+        }
+        return LiveSpeakerRoster.Resolution(speakerID: nil, label: sample?.matchedName ?? label(for: channel))
     }
 
     /// Convenience: speaker defaults to the channel label. Used by tests

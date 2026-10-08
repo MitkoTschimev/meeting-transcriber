@@ -48,6 +48,7 @@ struct KnownVoicesView: View {
     @State private var filter = ""
     @State private var modal: ActiveModal?
     @State private var showingEnrollment = false
+    @State private var dbUnreadable = false
 
     private let matcher: SpeakerMatcher
     private let diarizerFactory: (() -> any DiarizationProvider)?
@@ -83,6 +84,7 @@ struct KnownVoicesView: View {
         // its rows on first body evaluation. `.onAppear → reload()` re-runs
         // the same query for in-place refresh after mutations.
         _speakers = State(initialValue: SpeakerMatcher.rankByRecency(speakers: matcher.loadDB()))
+        _dbUnreadable = State(initialValue: matcher.isDBUnreadable)
     }
 
     enum ActiveModal: Identifiable {
@@ -108,11 +110,20 @@ struct KnownVoicesView: View {
             }
             TextField("Filter…", text: $filter)
                 .textFieldStyle(.roundedBorder)
+            if dbUnreadable {
+                Text("Saved voices could not be read. The file was backed up as speakers.json.corrupt and will not be overwritten, so a typo cannot wipe them.")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(A11yID.knownVoicesCorruptBanner)
+            }
 
             speakerTable
                 .frame(minHeight: 280)
 
             actionButtonsRow
+            Text("Voices you name in the live transcript are saved here too, on this Mac only. Rename or delete them any time.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if pipelineBusy, diarizerFactory != nil {
                 Text("Pipeline busy — diarization may be slower.")
                     .font(.caption)
@@ -299,6 +310,7 @@ struct KnownVoicesView: View {
 
     private func reload() {
         speakers = SpeakerMatcher.rankByRecency(speakers: matcher.loadDB())
+        dbUnreadable = matcher.isDBUnreadable
     }
 
     private func startRename() {
