@@ -19,6 +19,10 @@ protocol VoiceProfileStoring: AnyObject {
 final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
     private let dbPath: URL
     private let onChange: () -> Void
+    /// Avoid re-decoding `speakers.json` on the main thread every time the
+    /// naming menu is composed. Invalidated on enroll.
+    private var cachedNames: [String] = []
+    private var namesLoaded = false
 
     /// - Parameter onChange: invalidates caches that mirror the DB
     ///   (`PipelineQueue.knownSpeakerNames`), as KnownVoices' `onMutate` does.
@@ -28,8 +32,10 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
     }
 
     func savedVoiceNames() -> [String] {
-        let speakers = SpeakerMatcher(dbPath: dbPath).loadDB().filter { !$0.isSynthetic }
-        return SpeakerMatcher.rankByRecency(speakers: speakers).map(\.name)
+        if namesLoaded { return cachedNames }
+        cachedNames = Self.loadNames(dbPath: dbPath)
+        namesLoaded = true
+        return cachedNames
     }
 
     /// Reuses `SpeakerMatcher.updateDB`, so a correction behaves exactly like
@@ -44,6 +50,12 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
             embeddings: [label: enrollment.embedding],
             speakingTimes: [label: enrollment.speakingTime],
         )
+        namesLoaded = false
         onChange()
+    }
+
+    nonisolated private static func loadNames(dbPath: URL) -> [String] {
+        let speakers = SpeakerMatcher(dbPath: dbPath).loadDB().filter { !$0.isSynthetic }
+        return SpeakerMatcher.rankByRecency(speakers: speakers).map(\.name)
     }
 }

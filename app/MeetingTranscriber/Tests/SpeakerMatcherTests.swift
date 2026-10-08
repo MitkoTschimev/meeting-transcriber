@@ -153,6 +153,22 @@ final class SpeakerMatcherTests: XCTestCase {
         XCTAssertTrue(loaded.isEmpty)
     }
 
+    /// A file that exists but cannot be decoded must not be replaced by the
+    /// next write — that would wipe every saved voice.
+    func testCorruptDBIsBackedUpAndNotOverwritten() throws {
+        let garbage = Data("{not-json".utf8)
+        try garbage.write(to: dbPath)
+        let matcher = SpeakerMatcher(dbPath: dbPath)
+        XCTAssertTrue(matcher.loadDB().isEmpty)
+
+        matcher.saveDB([StoredSpeaker(name: "Alice", embeddings: [[1, 0, 0]])])
+
+        XCTAssertEqual(try Data(contentsOf: dbPath), garbage)
+        XCTAssertTrue(matcher.loadDB().isEmpty)
+        let backup = dbPath.deletingLastPathComponent().appendingPathComponent("speakers.json.corrupt")
+        XCTAssertEqual(try Data(contentsOf: backup), garbage)
+    }
+
     // MARK: - allSpeakerNames
 
     func testAllSpeakerNamesEmptyWhenNoDB() {

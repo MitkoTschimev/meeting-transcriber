@@ -76,17 +76,35 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         XCTAssertEqual(session.speakerRoster.speakers.count { $0.channel == .app }, 1)
     }
 
-    func testNamingSavesTheVoiceProfile() throws {
+    func testNamingSavesTheVoiceProfileOnceTheRecordingFinishes() throws {
         let store = FakeVoiceProfileStore(names: ["Dana"])
         let session = MeetingNotesSession(voiceProfiles: store)
         session.begin(title: "Sync", appName: "Gather")
         let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
 
         session.renameLiveSpeaker(id: id, to: "  Alice ")
+        XCTAssertTrue(store.enrolled.isEmpty, "a live typo must not hit speakers.json yet")
+        XCTAssertEqual(session.savedVoiceNames, ["Dana"])
+
+        session.finishRecording()
 
         XCTAssertEqual(store.enrolled.map(\.name), ["Alice"])
         XCTAssertEqual(store.enrolled.first?.embedding, alice)
         XCTAssertEqual(session.savedVoiceNames, ["Alice", "Dana"])
+    }
+
+    func testCorrectingANameEnrollsOnlyTheFinalOne() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+
+        session.renameLiveSpeaker(id: id, to: "Aice")
+        session.renameLiveSpeaker(id: id, to: "Bob")
+        session.finishRecording()
+
+        XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
+        XCTAssertEqual(session.lines.map(\.speaker), ["Bob"])
     }
 
     func testGenericNamesAreNotSaved() throws {
@@ -96,6 +114,7 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         let id = try XCTUnwrap(hear("Hi", alice, in: session, channel: .mic).speakerID)
 
         session.renameLiveSpeaker(id: id, to: "me")
+        session.finishRecording()
 
         XCTAssertTrue(store.enrolled.isEmpty)
     }
@@ -162,6 +181,19 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
 
         XCTAssertEqual(resolved.label, "Speaker 1")
         XCTAssertNotNil(resolved.speakerID)
+    }
+
+    func testCaptionsRelabelRecentFinalsWhenAVoiceIsNamed() throws {
+        let session = MeetingNotesSession()
+        let captions = LiveCaptionsState()
+        captions.attachNotes(session)
+
+        let resolved = captions.resolveSpeaker(sample(alice), channel: .app)
+        captions.applyFinalized("Hello", channel: .app, speaker: resolved.label, speakerID: resolved.speakerID)
+        XCTAssertEqual(captions.recentFinals.map(\.speaker), ["Speaker 1"])
+
+        try session.renameLiveSpeaker(id: XCTUnwrap(resolved.speakerID), to: "Alice")
+        XCTAssertEqual(captions.recentFinals.map(\.speaker), ["Alice"])
     }
 
     func testCaptionsWithoutNotesFallBackToMatchOrChannelLabel() {

@@ -61,6 +61,15 @@ final class LiveCaptionsState {
     /// overlay display state.
     @ObservationIgnored weak var notes: MeetingNotesSession?
 
+    /// Forwards finals into the notes session and keeps overlay lines in
+    /// step when a voice is named there.
+    func attachNotes(_ session: MeetingNotesSession) {
+        notes = session
+        session.onSpeakerRelabel = { [weak self] ids, toID, label in
+            self?.relabelRecentFinals(ids: ids, toID: toID, label: label)
+        }
+    }
+
     init(micLabel: String = "Me", appLabel: String = "Remote") {
         self.micLabel = micLabel
         self.appLabel = appLabel
@@ -136,6 +145,15 @@ final class LiveCaptionsState {
         lastEventAt = Date()
         scheduleAutoClear()
         notes?.applyFinalized(text, channel: channel, speaker: speaker, speakerID: speakerID)
+    }
+
+    /// Keep overlay lines in step when a session voice is named. `speaker` is
+    /// otherwise captured at finalize time and would keep showing "Speaker N".
+    func relabelRecentFinals(ids: Set<Int>, toID: Int, label: String) {
+        recentFinals = recentFinals.map { line in
+            guard let id = line.speakerID, ids.contains(id) else { return line }
+            return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
+        }
     }
 
     /// Attach a finalized utterance to a session voice and return the label

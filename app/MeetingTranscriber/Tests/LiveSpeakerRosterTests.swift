@@ -44,6 +44,31 @@ final class LiveSpeakerRosterTests: XCTestCase {
         XCTAssertEqual(app.label, "Speaker 1", "the mic default does not use up a number")
     }
 
+    /// A sub-second "hi" founds Me with no centroid. The next sentence must
+    /// feed that voice, not create Speaker 1 for the rest of the meeting.
+    func testShortOpeningLineDoesNotSplitTheMicVoice() {
+        var roster = LiveSpeakerRoster()
+        let greeting = roster.resolve(sample(alice, duration: 0.4), channel: .mic, fallbackLabel: "Me")
+        let sentence = roster.resolve(sample(aliceAgain, duration: 3), channel: .mic, fallbackLabel: "Me")
+
+        XCTAssertEqual(greeting.label, "Me")
+        XCTAssertEqual(sentence.speakerID, greeting.speakerID)
+        XCTAssertEqual(sentence.label, "Me")
+        XCTAssertEqual(roster.speakers.count, 1)
+        XCTAssertEqual(roster.speaker(id: greeting.speakerID ?? -1)?.centroidSampleCount, 1)
+        XCTAssertEqual(roster.speaker(id: greeting.speakerID ?? -1)?.isYou, true)
+    }
+
+    func testShortOpeningLineDoesNotSplitTheAppVoice() {
+        var roster = LiveSpeakerRoster()
+        let greeting = roster.resolve(sample(alice, duration: 0.4), channel: .app, fallbackLabel: "Remote")
+        let sentence = roster.resolve(sample(aliceAgain, duration: 3), channel: .app, fallbackLabel: "Remote")
+
+        XCTAssertEqual(greeting.label, "Speaker 1")
+        XCTAssertEqual(sentence.speakerID, greeting.speakerID)
+        XCTAssertEqual(roster.speakers.count, 1)
+    }
+
     func testShortUtteranceJoinsTheClosestVoiceInsteadOfFoundingOne() {
         var roster = LiveSpeakerRoster()
         let first = roster.resolve(sample(alice), channel: .app, fallbackLabel: "Remote")
@@ -81,6 +106,26 @@ final class LiveSpeakerRosterTests: XCTestCase {
     }
 
     // MARK: - Saved profiles
+
+    func testSavedProfileOfTheUsersOwnVoiceStillCountsAsYou() {
+        var roster = LiveSpeakerRoster()
+        let first = roster.resolve(sample(alice, matched: "Mitko", duration: 4), channel: .mic, fallbackLabel: "Me")
+        XCTAssertEqual(first.label, "Mitko")
+        XCTAssertEqual(roster.speaker(id: first.speakerID ?? -1)?.isYou, true)
+        XCTAssertTrue(roster.notYouSpeakerIDs.isEmpty)
+    }
+
+    func testShortProfileMatchDoesNotRelabelTheVoice() {
+        var roster = LiveSpeakerRoster()
+        let first = roster.resolve(sample(alice, duration: 3), channel: .app, fallbackLabel: "Remote")
+        let falseHit = roster.resolve(sample(aliceAgain, matched: "Alice", duration: 0.4), channel: .app, fallbackLabel: "Remote")
+
+        XCTAssertEqual(falseHit.speakerID, first.speakerID)
+        XCTAssertEqual(falseHit.label, "Speaker 1")
+        XCTAssertNil(falseHit.relabeledSpeakerID)
+        XCTAssertEqual(roster.speaker(id: first.speakerID ?? -1)?.source, .placeholder)
+        XCTAssertEqual(roster.speaker(id: first.speakerID ?? -1)?.label, "Speaker 1")
+    }
 
     func testProfileMatchRelabelsAnUnnamedVoice() {
         var roster = LiveSpeakerRoster()
@@ -151,6 +196,15 @@ final class LiveSpeakerRosterTests: XCTestCase {
         XCTAssertEqual(roster.speakers.count, 1)
         XCTAssertNil(roster.speaker(id: split.speakerID ?? -1))
         XCTAssertEqual(roster.speaker(id: alicesVoice.speakerID ?? -1)?.speakingTime, 6)
+    }
+
+    func testPendingEnrollmentsUseTheFinalNameAfterACorrection() throws {
+        var roster = LiveSpeakerRoster()
+        let first = roster.resolve(sample(alice, duration: 4), channel: .app, fallbackLabel: "Remote")
+        let id = try XCTUnwrap(first.speakerID)
+        _ = roster.rename(id: id, to: "Aice", micLabel: "Me")
+        _ = roster.rename(id: id, to: "Alice", micLabel: "Me")
+        XCTAssertEqual(roster.pendingEnrollments(micLabel: "Me").map(\.name), ["Alice"])
     }
 
     func testRenameRejectsBlankNamesAndUnknownIDs() {

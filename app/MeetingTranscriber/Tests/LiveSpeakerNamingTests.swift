@@ -85,12 +85,15 @@ final class LiveSpeakerNamingTests: XCTestCase {
         }
 
         let named = try pane(naming).inspect()
-        XCTAssertNoThrow(try named.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSpeakerMenu))
+        let speakerID = try XCTUnwrap(resolved.speakerID)
+        XCTAssertNoThrow(try named.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSpeakerMenu(speakerID)))
         XCTAssertNoThrow(try named.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSpeakerChips))
+        XCTAssertNoThrow(try named.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesTranscript))
         XCTAssertNoThrow(try named.find(text: "Hello"))
 
         let plain = try pane(nil).inspect()
-        XCTAssertThrowsError(try plain.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSpeakerMenu))
+        XCTAssertThrowsError(try plain.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSpeakerMenu(speakerID)))
+        XCTAssertNoThrow(try plain.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesTranscript))
         XCTAssertNoThrow(try plain.find(text: "Speaker 1"))
     }
 }

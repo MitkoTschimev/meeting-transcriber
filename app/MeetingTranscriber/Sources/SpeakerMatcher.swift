@@ -439,6 +439,7 @@ class SpeakerMatcher {
     }
 
     func saveDB(_ speakers: [StoredSpeaker]) {
+        guard canReplaceExistingDB() else { return }
         do {
             let data = try JSONEncoder().encode(speakers)
             let tmp = dbPath.deletingLastPathComponent()
@@ -452,6 +453,31 @@ class SpeakerMatcher {
         } catch {
             logger.error("Failed to save speaker DB: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// A file that exists but does not decode as the current speaker array
+    /// must not be replaced with `[]` (or anything else): the next enroll
+    /// would wipe every saved voice. Copy it aside and skip the write.
+    private func canReplaceExistingDB() -> Bool {
+        guard FileManager.default.fileExists(atPath: dbPath.path) else { return true }
+        guard let data = try? Data(contentsOf: dbPath) else { return true }
+        if (try? JSONDecoder().decode([StoredSpeaker].self, from: data)) != nil {
+            return true
+        }
+        let backup = dbPath.deletingLastPathComponent()
+            .appendingPathComponent("speakers.json.corrupt")
+        try? FileManager.default.removeItem(at: backup)
+        do {
+            try FileManager.default.copyItem(at: dbPath, to: backup)
+            logger.error(
+                "speakers.json is unreadable; backed up to speakers.json.corrupt and skipped the write",
+            )
+        } catch {
+            logger.error(
+                "speakers.json is unreadable and could not be backed up: \(error.localizedDescription, privacy: .public)",
+            )
+        }
+        return false
     }
 
     /// Pre-assign participant names to unmatched speakers by speaking time.

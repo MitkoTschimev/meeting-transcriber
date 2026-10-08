@@ -85,7 +85,7 @@ struct LiveSpeakerMenu: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Who is this? Pick a name or type a new one. All of their lines update and the voice is remembered for future meetings.")
-        .accessibilityIdentifier(A11yID.meetingNotesSpeakerMenu)
+        .accessibilityIdentifier(A11yID.meetingNotesSpeakerMenu(speakerID))
     }
 
     @ViewBuilder private var menuItems: some View {
@@ -146,6 +146,9 @@ struct LiveSpeakerNameAlertHost<Content: View>: View {
 
     @State private var pendingID: Int?
     @State private var draft = ""
+    /// Kept when the pipeline transcript replaces the live one while the
+    /// prompt is open, so Save still applies the name the user typed.
+    @State private var heldNaming: LiveSpeakerNaming?
 
     init(
         naming: LiveSpeakerNaming?,
@@ -157,6 +160,7 @@ struct LiveSpeakerNameAlertHost<Content: View>: View {
 
     var body: some View {
         content { id in
+            heldNaming = naming
             draft = naming?.draftName(for: id) ?? ""
             pendingID = id
         }
@@ -164,7 +168,7 @@ struct LiveSpeakerNameAlertHost<Content: View>: View {
             TextField("Name", text: $draft)
                 .accessibilityIdentifier(A11yID.meetingNotesNewSpeakerName)
             Button("Save") { save() }
-            Button("Cancel", role: .cancel) { pendingID = nil }
+            Button("Cancel", role: .cancel) { dismiss() }
         } message: {
             Text("All of their lines in this meeting update. The voice is saved on this Mac only, so future meetings recognise them.")
         }
@@ -173,14 +177,19 @@ struct LiveSpeakerNameAlertHost<Content: View>: View {
     private var isPresented: Binding<Bool> {
         Binding(
             get: { pendingID != nil },
-            set: { if !$0 { pendingID = nil } },
+            set: { if !$0 { dismiss() } },
         )
     }
 
     private func save() {
-        if let id = pendingID, let naming {
+        if let id = pendingID, let naming = heldNaming ?? naming {
             naming.onAssign(id, draft)
         }
+        dismiss()
+    }
+
+    private func dismiss() {
         pendingID = nil
+        heldNaming = nil
     }
 }

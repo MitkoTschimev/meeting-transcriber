@@ -63,6 +63,10 @@ struct LiveSpeakerRoster: Equatable {
     /// Utterances shorter than this give embeddings too noisy to found a new
     /// voice or move a centroid; they still join the nearest voice.
     static let minQualifyingDuration: TimeInterval = 1.0
+    /// A saved-profile match must speak at least this long before it may
+    /// rename a whole voice (and all its earlier lines). Shorter hits are
+    /// too easy to fire on a cough or a one-word overlap.
+    static let minProfileRelabelDuration: TimeInterval = SpeakerMatcher.minSpeakingTimeForCentroid
     /// Hard cap per channel so a noisy channel cannot invent dozens of voices.
     static let maxSpeakersPerChannel = 8
 
@@ -115,11 +119,19 @@ struct LiveSpeakerRoster: Equatable {
         }
         let nearest = nearestSpeaker(to: sample.embedding, channel: channel)
         let withinThreshold = nearest.map { $0.distance < Self.clusterDistanceThreshold } ?? false
+        let nearestHasNoCentroid = nearest.map { speakers[$0.index].centroid.isEmpty } ?? false
 
-        if let matched = sample.matchedName {
+        if let matched = sample.matchedName, sample.duration >= Self.minProfileRelabelDuration {
             return resolveMatched(sample, matched: matched, channel: channel, nearest: nearest, withinThreshold: withinThreshold)
         }
         if let nearest, withinThreshold {
+            return absorb(sample, intoIndex: nearest.index)
+        }
+        // A voice founded by a short opening line has no centroid yet. The
+        // next qualifying sample of the same channel belongs to it — otherwise
+        // "hi" becomes Me and the next sentence becomes Speaker 1 for the rest
+        // of the meeting.
+        if let nearest, nearestHasNoCentroid {
             return absorb(sample, intoIndex: nearest.index)
         }
         let channelCount = speakers.filter { $0.channel == channel }.count
@@ -146,7 +158,8 @@ struct LiveSpeakerRoster: Equatable {
         if let index = speakers.firstIndex(where: { $0.channel == channel && $0.label == matched }) {
             return absorb(sample, intoIndex: index)
         }
-        if let nearest, withinThreshold, speakers[nearest.index].source == .placeholder {
+        if let nearest, speakers[nearest.index].source != .user,
+           withinThreshold || speakers[nearest.index].centroid.isEmpty {
             speakers[nearest.index].label = matched
             speakers[nearest.index].source = .profile
             var resolution = absorb(sample, intoIndex: nearest.index)
@@ -154,6 +167,22 @@ struct LiveSpeakerRoster: Equatable {
             return resolution
         }
         return found(sample, channel: channel, label: matched, source: .profile)
+    }
+
+    /// Voices the user named in this session, ready to teach `speakers.json`
+    /// once the recording ends. Computed from the *final* name of each voice
+    /// so a typo that was then corrected is never written.
+    func pendingEnrollments(micLabel: String) -> [VoiceEnrollment] {
+        speakers.compactMap { speaker in
+            guard speaker.source == .user,
+                  !Self.isGenericName(speaker.label, micLabel: micLabel),
+                  !speaker.centroid.isEmpty else { return nil }
+            return VoiceEnrollment(
+                name: speaker.label,
+                embedding: speaker.centroid,
+                speakingTime: speaker.speakingTime,
+            )
+        }
     }
 
     // MARK: - Rename
@@ -245,7 +274,10 @@ struct LiveSpeakerRoster: Equatable {
             centroid: qualifies ? sample.embedding : [],
             centroidSampleCount: qualifies ? 1 : 0,
             speakingTime: sample.duration,
-            isYou: isFirstMicVoice && source == .placeholder,
+            // First mic voice is the local user even when a saved profile of
+            // their own voice labelled them. Only an explicit rename to
+            // someone else clears this.
+            isYou: isFirstMicVoice,
         )
         nextID += 1
         speakers.append(speaker)

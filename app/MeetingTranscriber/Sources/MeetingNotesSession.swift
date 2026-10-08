@@ -53,6 +53,10 @@ final class MeetingNotesSession {
         didSet { refreshSavedVoices() }
     }
 
+    /// Overlay buffer that mirrors live lines. Relabel after a naming so the
+    /// caption bar does not keep the old "Speaker N".
+    @ObservationIgnored var onSpeakerRelabel: ((Set<Int>, Int, String) -> Void)?
+
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
     /// finish / adopt / begin flush immediately.
@@ -187,18 +191,15 @@ final class MeetingNotesSession {
     }
 
     /// Name (or rename) a session voice: every line of that voice takes the
-    /// name now, later lines arrive with it, and the voice is saved so future
-    /// meetings recognise it. Naming it after another voice in this session
-    /// merges the two.
+    /// name now and later lines arrive with it. Naming it after another voice
+    /// in this session merges the two. The voice is written to `speakers.json`
+    /// only when the recording finishes, so a typo that is then corrected is
+    /// never saved, and Alice→Bob does not leave the embedding folded into Alice.
     func renameLiveSpeaker(id: Int, to name: String) {
         guard let outcome = speakerRoster.rename(id: id, to: name, micLabel: micLabel) else { return }
         relabelLines(ids: Set(outcome.affectedIDs), toID: outcome.speakerID, label: outcome.label)
         let isYou = speakerRoster.speaker(id: outcome.speakerID)?.isYou ?? false
         registerSpeaker(outcome.label, isYou: isYou)
-        if let enrollment = outcome.enrollment, let voiceProfiles {
-            voiceProfiles.enroll(enrollment)
-            refreshSavedVoices()
-        }
     }
 
     func refreshSavedVoices() {
@@ -211,6 +212,19 @@ final class MeetingNotesSession {
             guard let id = line.speakerID, ids.contains(id) else { return line }
             return LiveCaptionLine(channel: line.channel, text: line.text, speaker: label, speakerID: toID)
         }
+        onSpeakerRelabel?(ids, toID, label)
+    }
+
+    /// Write each user-named voice to the saved profiles once, under its
+    /// final name. Called when the recording ends, not on every rename.
+    func enrollNamedVoices() {
+        guard let voiceProfiles else { return }
+        let enrollments = speakerRoster.pendingEnrollments(micLabel: micLabel)
+        guard !enrollments.isEmpty else { return }
+        for enrollment in enrollments {
+            voiceProfiles.enroll(enrollment)
+        }
+        refreshSavedVoices()
     }
 
     /// Append-only palette so live→diarized handoff keeps first-seen colors.
@@ -269,6 +283,7 @@ final class MeetingNotesSession {
     func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
         persistThoughtsNow()
+        enrollNamedVoices()
         endedAt = Date()
         hypothesisMic = ""
         hypothesisApp = ""

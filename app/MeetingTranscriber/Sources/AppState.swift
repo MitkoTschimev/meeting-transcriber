@@ -272,7 +272,7 @@ final class AppState {
             meetingNotes: meetingNotes,
         ) { [weak calendar] date in calendar?.eventOverlapping(at: date) }
 
-        liveCaptions.notes = meetingNotes
+        liveCaptions.attachNotes(meetingNotes)
 
         #if !APPSTORE
             // Not trailing-closure: `isEnabled` is the first param (the other two
