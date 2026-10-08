@@ -113,6 +113,9 @@ struct KnownVoicesView: View {
                 .frame(minHeight: 280)
 
             actionButtonsRow
+            Text("Voices you name in the live transcript are saved here too, on this Mac only. Rename or delete them any time.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if pipelineBusy, diarizerFactory != nil {
                 Text("Pipeline busy — diarization may be slower.")
                     .font(.caption)
