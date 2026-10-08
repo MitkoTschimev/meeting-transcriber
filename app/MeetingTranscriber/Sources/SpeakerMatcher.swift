@@ -409,6 +409,14 @@ class SpeakerMatcher {
         return (try? JSONDecoder().decode([StoredSpeaker].self, from: data)) ?? []
     }
 
+    /// The file exists but does not decode. Writes are skipped and a
+    /// `speakers.json.corrupt` backup is kept; Settings can show a warning.
+    var isDBUnreadable: Bool {
+        guard FileManager.default.fileExists(atPath: dbPath.path) else { return false }
+        guard let data = try? Data(contentsOf: dbPath) else { return false }
+        return (try? JSONDecoder().decode([StoredSpeaker].self, from: data)) == nil
+    }
+
     /// Names of all stored speakers, ordered for picker display: most recently
     /// used first, then by `useCount` descending, then alphabetically. Speakers
     /// without `lastUsed` (legacy entries) are sorted alphabetically at the end.

@@ -55,4 +55,15 @@ final class VoiceProfileStoreTests: XCTestCase { // swiftlint:disable:this balan
 
         XCTAssertEqual(SpeakerDBVoiceProfileStore(dbPath: dbPath).savedVoiceNames(), ["Recent", "Old"])
     }
+
+    func testSavedNamesCacheInvalidatesWhenTheFileIsWrittenElsewhere() {
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        XCTAssertEqual(store.savedVoiceNames(), [])
+
+        SpeakerMatcher(dbPath: dbPath).saveDB([
+            StoredSpeaker(name: "Alice", embeddings: [[1, 0, 0]], lastUsed: Date(), useCount: 1),
+        ])
+
+        XCTAssertEqual(store.savedVoiceNames(), ["Alice"])
+    }
 }

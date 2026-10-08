@@ -138,6 +138,19 @@ final class LiveSpeakerRosterTests: XCTestCase {
         XCTAssertEqual(roster.speaker(id: first.speakerID ?? -1)?.source, .profile)
     }
 
+    func testProfileMatchDoesNotRelabelAVoiceThatAlreadyHasASavedName() {
+        var roster = LiveSpeakerRoster()
+        let first = roster.resolve(sample(alice, matched: "Bob"), channel: .app, fallbackLabel: "Remote")
+        let later = roster.resolve(sample(aliceAgain, matched: "Carol", duration: 4), channel: .app, fallbackLabel: "Remote")
+
+        XCTAssertEqual(first.label, "Bob")
+        XCTAssertEqual(later.speakerID, first.speakerID)
+        XCTAssertEqual(later.label, "Bob")
+        XCTAssertNil(later.relabeledSpeakerID)
+        XCTAssertEqual(roster.speakers.count, 1)
+        XCTAssertEqual(roster.speaker(id: first.speakerID ?? -1)?.source, .profile)
+    }
+
     func testProfileMatchJoinsTheVoiceAlreadyCarryingThatName() {
         var roster = LiveSpeakerRoster()
         let first = roster.resolve(sample(alice, matched: "Alice"), channel: .app, fallbackLabel: "Remote")

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -56,6 +57,9 @@ final class MeetingNotesSession {
     /// Overlay buffer that mirrors live lines. Relabel after a naming so the
     /// caption bar does not keep the old "Speaker N".
     @ObservationIgnored var onSpeakerRelabel: ((Set<Int>, Int, String) -> Void)?
+    /// True once this session's named voices have been written. A later
+    /// `retireLiveRoster` (pipeline transcript, next `begin`, quit) is a no-op.
+    private var didEnrollNamedVoices = false
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -97,6 +101,19 @@ final class MeetingNotesSession {
         self.voiceProfiles = voiceProfiles
         thoughtsStore?.pruneInProgress()
         refreshSavedVoices()
+        // Names given after Stop live on the roster until it is retired.
+        // Quit has no next `begin` and may never adopt a pipeline transcript
+        // (record-only), so flush here. The session lives for the process.
+        // swiftlint:disable:next discarded_notification_center_observer
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.retireLiveRoster()
+            }
+        }
     }
 
     func setMicLabel(_ label: String) {
@@ -216,8 +233,11 @@ final class MeetingNotesSession {
     }
 
     /// Write each user-named voice to the saved profiles once, under its
-    /// final name. Called when the recording ends, not on every rename.
-    func enrollNamedVoices() {
+    /// final name. Called when the live roster is retired — not on Stop,
+    /// so a name given or corrected after Stop is what gets saved.
+    func retireLiveRoster() {
+        guard !didEnrollNamedVoices else { return }
+        didEnrollNamedVoices = true
         guard let voiceProfiles else { return }
         let enrollments = speakerRoster.pendingEnrollments(micLabel: micLabel)
         guard !enrollments.isEmpty else { return }
@@ -283,7 +303,6 @@ final class MeetingNotesSession {
     func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
         persistThoughtsNow()
-        enrollNamedVoices()
         endedAt = Date()
         hypothesisMic = ""
         hypothesisApp = ""
@@ -359,6 +378,7 @@ final class MeetingNotesSession {
            let text = Self.readFile(path) {
             pipelineTranscript = text
             loadedTranscriptPath = path
+            retireLiveRoster()
             rememberPipelineSpeakers(text)
         }
         if let path = job.protocolPath, path != loadedNotesPath,
@@ -473,6 +493,7 @@ final class MeetingNotesSession {
     }
 
     private func resetContents() {
+        retireLiveRoster()
         persistTask?.cancel()
         persistTask = nil
         isLoadingThoughts = true
@@ -492,6 +513,7 @@ final class MeetingNotesSession {
         thoughtsURL = nil
         speakerPalette = SpeakerAccent.Palette()
         speakerRoster = LiveSpeakerRoster()
+        didEnrollNamedVoices = false
         refreshSavedVoices()
         didAutoOpenWindow = false
         isLoadingThoughts = false

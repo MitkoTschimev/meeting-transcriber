@@ -158,13 +158,20 @@ struct LiveSpeakerRoster: Equatable {
         if let index = speakers.firstIndex(where: { $0.channel == channel && $0.label == matched }) {
             return absorb(sample, intoIndex: index)
         }
-        if let nearest, speakers[nearest.index].source != .user,
-           withinThreshold || speakers[nearest.index].centroid.isEmpty {
-            speakers[nearest.index].label = matched
-            speakers[nearest.index].source = .profile
-            var resolution = absorb(sample, intoIndex: nearest.index)
-            resolution.relabeledSpeakerID = speakers[nearest.index].id
-            return resolution
+        if let nearest, withinThreshold || speakers[nearest.index].centroid.isEmpty {
+            switch speakers[nearest.index].source {
+            case .placeholder:
+                speakers[nearest.index].label = matched
+                speakers[nearest.index].source = .profile
+                var resolution = absorb(sample, intoIndex: nearest.index)
+                resolution.relabeledSpeakerID = speakers[nearest.index].id
+                return resolution
+
+            case .profile, .user:
+                // Already named (saved profile or the user). A later Carol
+                // hit must not relabel Bob's voice or split a new one.
+                return absorb(sample, intoIndex: nearest.index)
+            }
         }
         return found(sample, channel: channel, label: matched, source: .profile)
     }

@@ -167,6 +167,7 @@ final class SpeakerMatcherTests: XCTestCase {
         XCTAssertTrue(matcher.loadDB().isEmpty)
         let backup = dbPath.deletingLastPathComponent().appendingPathComponent("speakers.json.corrupt")
         XCTAssertEqual(try Data(contentsOf: backup), garbage)
+        XCTAssertTrue(matcher.isDBUnreadable)
     }
 
     // MARK: - allSpeakerNames

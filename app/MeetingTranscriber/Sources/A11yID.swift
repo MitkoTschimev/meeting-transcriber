@@ -124,6 +124,8 @@ enum A11yID {
         "known-less-\(speakerLabel)"
     }
 
+    static let knownVoicesCorruptBanner = "knownVoicesCorruptBanner"
+
     // Live captions overlay.
     static let liveCaptionBackend = "liveCaptionBackend"
 

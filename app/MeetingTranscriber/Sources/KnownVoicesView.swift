@@ -108,6 +108,12 @@ struct KnownVoicesView: View {
             }
             TextField("Filter…", text: $filter)
                 .textFieldStyle(.roundedBorder)
+            if matcher.isDBUnreadable {
+                Text("Saved voices could not be read. The file was backed up as speakers.json.corrupt and will not be overwritten, so a typo cannot wipe them.")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(A11yID.knownVoicesCorruptBanner)
+            }
 
             speakerTable
                 .frame(minHeight: 280)

@@ -87,6 +87,9 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         XCTAssertEqual(session.savedVoiceNames, ["Dana"])
 
         session.finishRecording()
+        XCTAssertTrue(store.enrolled.isEmpty, "Stop is not retirement; names after Stop must still be able to replace this")
+
+        session.retireLiveRoster()
 
         XCTAssertEqual(store.enrolled.map(\.name), ["Alice"])
         XCTAssertEqual(store.enrolled.first?.embedding, alice)
@@ -102,9 +105,33 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         session.renameLiveSpeaker(id: id, to: "Aice")
         session.renameLiveSpeaker(id: id, to: "Bob")
         session.finishRecording()
+        session.retireLiveRoster()
 
         XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
         XCTAssertEqual(session.lines.map(\.speaker), ["Bob"])
+    }
+
+    /// The live transcript stays nameable after Stop until a pipeline
+    /// transcript replaces it. A name given then must still be enrolled,
+    /// and a correction then must not leave the typo in speakers.json.
+    func testNamingAfterStopEnrollsTheFinalName() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+
+        session.renameLiveSpeaker(id: id, to: "Aice")
+        session.finishRecording()
+        XCTAssertTrue(session.canNameLiveSpeakers, "the live transcript is still on screen")
+        XCTAssertTrue(store.enrolled.isEmpty)
+
+        session.renameLiveSpeaker(id: id, to: "Bob")
+        session.retireLiveRoster()
+
+        XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
+        XCTAssertEqual(session.lines.map(\.speaker), ["Bob"])
+        session.retireLiveRoster()
+        XCTAssertEqual(store.enrolled.count, 1, "exactly once")
     }
 
     func testGenericNamesAreNotSaved() throws {
@@ -115,6 +142,7 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
 
         session.renameLiveSpeaker(id: id, to: "me")
         session.finishRecording()
+        session.retireLiveRoster()
 
         XCTAssertTrue(store.enrolled.isEmpty)
     }
@@ -151,6 +179,20 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         let id = hear("Hi", alice, in: session).speakerID
         XCTAssertTrue(session.canNameLiveSpeakers)
         XCTAssertEqual(session.lastLiveSpeakerID, id)
+    }
+
+    func testStartingANewSessionEnrollsThePreviousMeetingsNames() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "One", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Alice")
+        session.finishRecording()
+
+        session.begin(title: "Two", appName: "Gather")
+
+        XCTAssertEqual(store.enrolled.map(\.name), ["Alice"])
+        XCTAssertTrue(session.speakerRoster.speakers.isEmpty)
     }
 
     func testANewSessionForgetsTheVoices() {

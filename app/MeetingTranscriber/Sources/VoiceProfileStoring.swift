@@ -20,9 +20,11 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
     private let dbPath: URL
     private let onChange: () -> Void
     /// Avoid re-decoding `speakers.json` on the main thread every time the
-    /// naming menu is composed. Invalidated on enroll.
+    /// naming menu is composed. Invalidated when the file's mtime changes
+    /// (this store's enroll, Settings → Speakers, post-meeting naming).
     private var cachedNames: [String] = []
     private var namesLoaded = false
+    private var cachedModificationDate: Date?
 
     /// - Parameter onChange: invalidates caches that mirror the DB
     ///   (`PipelineQueue.knownSpeakerNames`), as KnownVoices' `onMutate` does.
@@ -32,8 +34,10 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
     }
 
     func savedVoiceNames() -> [String] {
-        if namesLoaded { return cachedNames }
+        let mtime = modificationDate()
+        if namesLoaded, mtime == cachedModificationDate { return cachedNames }
         cachedNames = Self.loadNames(dbPath: dbPath)
+        cachedModificationDate = mtime
         namesLoaded = true
         return cachedNames
     }
@@ -51,7 +55,12 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
             speakingTimes: [label: enrollment.speakingTime],
         )
         namesLoaded = false
+        cachedModificationDate = nil
         onChange()
+    }
+
+    private func modificationDate() -> Date? {
+        try? dbPath.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 
     nonisolated private static func loadNames(dbPath: URL) -> [String] {
