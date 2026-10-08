@@ -1,4 +1,5 @@
 @testable import MeetingTranscriber
+import SwiftUI
 import ViewInspector
 import XCTest
 
@@ -29,30 +30,42 @@ final class MeetingNotesStopButtonTests: XCTestCase {
         XCTAssertNoThrow(try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton))
     }
 
-    func testStopButtonAsksBeforeStopping() throws {
-        let session = MeetingNotesSession()
-        session.begin(title: "Standup", appName: "GatherV2")
+    func testFirstPressArmsConfirmWithoutStopping() throws {
         let stops = ManagedCounter()
-        let view = makeView(session: session) { _ = stops.increment() }
+        var confirmStop = false
+        let view = MeetingNotesStopButton(
+            onStop: { _ = stops.increment() },
+            confirmStop: Binding(get: { confirmStop }, set: { confirmStop = $0 }),
+        )
 
-        let button = try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton)
-        try button.button().tap()
+        try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton).button().tap()
+
+        XCTAssertTrue(confirmStop)
         XCTAssertEqual(stops.value, 0, "the first press only asks; it must not finalize")
+    }
 
-        let dialog = try view.inspect().confirmationDialog()
-        XCTAssertEqual(try dialog.title().string(), "Stop recording?")
-        try dialog.actions().find(button: "Stop Recording").tap()
+    func testConfirmingStops() throws {
+        let stops = ManagedCounter()
+        var confirmStop = true
+        let view = MeetingNotesStopButton(
+            onStop: { _ = stops.increment() },
+            confirmStop: Binding(get: { confirmStop }, set: { confirmStop = $0 }),
+        )
+
+        try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesConfirmStopButton).button().tap()
         XCTAssertEqual(stops.value, 1)
     }
 
     func testKeepRecordingDismissesWithoutStopping() throws {
-        let session = MeetingNotesSession()
-        session.begin(title: "Standup", appName: "GatherV2")
         let stops = ManagedCounter()
-        let view = makeView(session: session) { _ = stops.increment() }
+        var confirmStop = true
+        let view = MeetingNotesStopButton(
+            onStop: { _ = stops.increment() },
+            confirmStop: Binding(get: { confirmStop }, set: { confirmStop = $0 }),
+        )
 
-        try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton).button().tap()
-        try view.inspect().confirmationDialog().actions().find(button: "Keep Recording").tap()
+        try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesKeepRecordingButton).button().tap()
+        XCTAssertFalse(confirmStop)
         XCTAssertEqual(stops.value, 0)
     }
 
