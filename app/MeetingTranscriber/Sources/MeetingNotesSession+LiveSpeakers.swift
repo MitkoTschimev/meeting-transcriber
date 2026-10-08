@@ -50,26 +50,97 @@ extension MeetingNotesSession {
     /// Write currently named voices to `speakers.json`. Called at Stop and
     /// immediately before the pipeline job is queued, so live names reach
     /// the transcript and summary. Safe to call again: already-written names
-    /// are skipped, and a correction since the last call renames the stored
-    /// profile rather than creating a duplicate.
+    /// are skipped; a correction renames only a profile this meeting created,
+    /// otherwise enrolls under the new name and withdraws this meeting's
+    /// sample from the pre-existing profile.
     func enrollLiveNamesKnownNow() {
         guard let voiceProfiles else { return }
         let enrollments = speakerRoster.pendingEnrollments(micLabel: micLabel)
+        let pendingIDs = Set(enrollments.map(\.speakerID))
         var didWrite = false
+
+        let staleIDs = enrolledAtStop.keys.filter { !pendingIDs.contains($0) }
+        for id in staleIDs {
+            if let previous = enrolledAtStop.removeValue(forKey: id) {
+                dropStopEnrollment(previous, using: voiceProfiles)
+                didWrite = true
+            }
+        }
+
         for enrollment in enrollments {
             if let previous = enrolledAtStop[enrollment.speakerID] {
-                if previous != enrollment.name {
-                    voiceProfiles.renameProfile(from: previous, to: enrollment.name)
-                    enrolledAtStop[enrollment.speakerID] = enrollment.name
+                if previous.name != enrollment.name {
+                    applyPostStopCorrection(from: previous, to: enrollment, using: voiceProfiles)
                     didWrite = true
                 }
                 continue
             }
-            voiceProfiles.enroll(enrollment)
-            enrolledAtStop[enrollment.speakerID] = enrollment.name
+            let created = voiceProfiles.enroll(enrollment)
+            enrolledAtStop[enrollment.speakerID] = LiveStopEnrollment(
+                name: enrollment.name,
+                createdProfile: created,
+                embedding: enrollment.embedding,
+                speakingTime: enrollment.speakingTime,
+            )
             didWrite = true
         }
         if didWrite { refreshSavedVoices() }
+    }
+
+    /// A post-Stop correction never renames or deletes a profile this meeting
+    /// did not create (saved "Bob" corrected to "Rob" must not become "Rob").
+    private func applyPostStopCorrection(
+        from previous: LiveStopEnrollment,
+        to enrollment: VoiceEnrollment,
+        using voiceProfiles: any VoiceProfileStoring,
+    ) {
+        if previous.createdProfile {
+            let targetExisted = voiceProfiles.savedVoiceNames().contains { $0 == enrollment.name }
+            voiceProfiles.renameProfile(from: previous.name, to: enrollment.name)
+            enrolledAtStop[enrollment.speakerID] = LiveStopEnrollment(
+                name: enrollment.name,
+                createdProfile: !targetExisted,
+                embedding: enrollment.embedding,
+                speakingTime: enrollment.speakingTime,
+            )
+            return
+        }
+        voiceProfiles.withdraw(
+            VoiceEnrollment(
+                name: previous.name,
+                embedding: previous.embedding,
+                speakingTime: previous.speakingTime,
+                speakerID: enrollment.speakerID,
+            ),
+            from: previous.name,
+        )
+        let created = voiceProfiles.enroll(enrollment)
+        enrolledAtStop[enrollment.speakerID] = LiveStopEnrollment(
+            name: enrollment.name,
+            createdProfile: created,
+            embedding: enrollment.embedding,
+            speakingTime: enrollment.speakingTime,
+        )
+    }
+
+    /// Generic-name correction or a merge that dropped this voice: delete a
+    /// profile we created, otherwise take our sample out of the old one.
+    private func dropStopEnrollment(
+        _ previous: LiveStopEnrollment,
+        using voiceProfiles: any VoiceProfileStoring,
+    ) {
+        if previous.createdProfile {
+            voiceProfiles.deleteProfile(name: previous.name)
+            return
+        }
+        voiceProfiles.withdraw(
+            VoiceEnrollment(
+                name: previous.name,
+                embedding: previous.embedding,
+                speakingTime: previous.speakingTime,
+            ),
+            from: previous.name,
+        )
     }
 
     /// Flush remaining names: enroll voices named after Stop, and rename a

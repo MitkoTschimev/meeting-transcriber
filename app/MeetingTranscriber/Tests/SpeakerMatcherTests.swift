@@ -282,6 +282,39 @@ final class SpeakerMatcherTests: XCTestCase {
         XCTAssertEqual(result?.centroid[1] ?? 0, 16.0 / 3.0, accuracy: 0.001)
     }
 
+    func testRemoveFromCentroidReversesRunningAverage() {
+        let updated = SpeakerMatcher.updateCentroid(current: [2, 4], count: 2, with: [4, 8])
+        let withdrawn = SpeakerMatcher.removeFromCentroid(
+            current: updated?.centroid ?? [],
+            count: updated?.count ?? 0,
+            sample: [4, 8],
+        )
+        XCTAssertEqual(withdrawn?.count, 2)
+        XCTAssertEqual(withdrawn?.centroid[0] ?? 0, 2, accuracy: 0.001)
+        XCTAssertEqual(withdrawn?.centroid[1] ?? 0, 4, accuracy: 0.001)
+    }
+
+    func testWithdrawConfirmationDoesNotDeleteTheProfile() {
+        let matcher = SpeakerMatcher(dbPath: dbPath)
+        matcher.updateDB(
+            mapping: ["S0": "Bob"],
+            embeddings: ["S0": [1, 0, 0]],
+            speakingTimes: ["S0": 5],
+        )
+        matcher.updateDB(
+            mapping: ["S1": "Bob"],
+            embeddings: ["S1": [0, 1, 0]],
+            speakingTimes: ["S1": 5],
+        )
+
+        XCTAssertTrue(matcher.withdrawConfirmation(name: "Bob", embedding: [0, 1, 0], duration: 5))
+        let bob = matcher.loadDB().first { $0.name == "Bob" }
+        XCTAssertEqual(bob?.name, "Bob")
+        XCTAssertEqual(bob?.embeddings, [[1, 0, 0]])
+        XCTAssertEqual(bob?.centroid, [1, 0, 0])
+        XCTAssertEqual(bob?.centroidSampleCount, 1)
+    }
+
     func testUpdateCentroidMixedDimensionsReturnsNil() {
         XCTAssertNil(SpeakerMatcher.updateCentroid(current: [1, 2], count: 1, with: [1, 2, 3]))
     }

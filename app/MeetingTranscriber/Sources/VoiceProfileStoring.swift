@@ -7,10 +7,16 @@ protocol VoiceProfileStoring: AnyObject {
     /// Saved voice names for the naming picker, most recently used first.
     func savedVoiceNames() -> [String]
     /// Add (or fold into) the saved profile for `enrollment.name`.
-    func enroll(_ enrollment: VoiceEnrollment)
-    /// Rename a stored profile. A post-Stop correction must rename, not
-    /// create a second profile under the new name.
+    /// `true` when a new profile was created, `false` when this meeting's
+    /// voiceprint was folded into a profile that already existed.
+    @discardableResult
+    func enroll(_ enrollment: VoiceEnrollment) -> Bool
+    /// Rename a stored profile. Only used for profiles this meeting created.
     func renameProfile(from: String, to: String)
+    /// Delete a profile this meeting created (generic-name correction, merge).
+    func deleteProfile(name: String)
+    /// Take this meeting's voiceprint back out of a pre-existing profile.
+    func withdraw(_ enrollment: VoiceEnrollment, from name: String)
 }
 
 /// Production store: the same on-device `speakers.json` (Application Support,
@@ -49,22 +55,42 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
     /// a post-meeting confirmation: a new name creates a profile, an existing
     /// one gets the embedding folded into its running-mean centroid (when the
     /// voice spoke long enough) and its recent-samples FIFO.
-    func enroll(_ enrollment: VoiceEnrollment) {
-        guard !enrollment.embedding.isEmpty else { return }
+    @discardableResult
+    func enroll(_ enrollment: VoiceEnrollment) -> Bool {
+        guard !enrollment.embedding.isEmpty else { return false }
+        let matcher = SpeakerMatcher(dbPath: dbPath)
+        let created = !matcher.loadDB().contains { $0.name == enrollment.name }
         let label = "live-\(UUID().uuidString)"
-        SpeakerMatcher(dbPath: dbPath).updateDB(
+        matcher.updateDB(
             mapping: [label: enrollment.name],
             embeddings: [label: enrollment.embedding],
             speakingTimes: [label: enrollment.speakingTime],
         )
-        namesLoaded = false
-        cachedModificationDate = nil
-        onChange()
+        invalidateNameCache()
+        return created
     }
 
     func renameProfile(from: String, to: String) {
         guard from != to else { return }
         SpeakerMatcher(dbPath: dbPath).renameSpeaker(from: from, to: to)
+        invalidateNameCache()
+    }
+
+    func deleteProfile(name: String) {
+        SpeakerMatcher(dbPath: dbPath).deleteSpeaker(name: name)
+        invalidateNameCache()
+    }
+
+    func withdraw(_ enrollment: VoiceEnrollment, from name: String) {
+        SpeakerMatcher(dbPath: dbPath).withdrawConfirmation(
+            name: name,
+            embedding: enrollment.embedding,
+            duration: enrollment.speakingTime,
+        )
+        invalidateNameCache()
+    }
+
+    private func invalidateNameCache() {
         namesLoaded = false
         cachedModificationDate = nil
         onChange()

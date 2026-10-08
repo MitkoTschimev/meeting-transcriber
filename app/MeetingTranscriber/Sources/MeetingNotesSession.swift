@@ -61,9 +61,10 @@ final class MeetingNotesSession {
     /// `retireLiveRoster` (pipeline transcript, next `begin`, quit) is a no-op.
     var didEnrollNamedVoices = false
     /// Names already written at Stop, keyed by session speaker id. Retire
-    /// enrolls only names added after Stop, and renames a stored profile
-    /// when the user corrected one of these.
-    var enrolledAtStop: [Int: String] = [:]
+    /// enrolls only names added after Stop. A correction renames the stored
+    /// profile only when this meeting created it; otherwise it enrolls under
+    /// the new name and withdraws this meeting's sample from the old one.
+    var enrolledAtStop: [Int: LiveStopEnrollment] = [:]
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;

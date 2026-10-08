@@ -49,6 +49,35 @@ final class VoiceProfileStoreTests: XCTestCase { // swiftlint:disable:this balan
         XCTAssertEqual(changes, 2)
     }
 
+    func testWithdrawRemovesThisMeetingsSampleFromAnExistingProfile() throws {
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        store.enroll(VoiceEnrollment(name: "Bob", embedding: [1, 0, 0], speakingTime: 5))
+        let before = try XCTUnwrap(SpeakerMatcher(dbPath: dbPath).loadDB().first)
+
+        store.enroll(VoiceEnrollment(name: "Bob", embedding: [0, 1, 0], speakingTime: 5))
+        store.withdraw(VoiceEnrollment(name: "Bob", embedding: [0, 1, 0], speakingTime: 5), from: "Bob")
+
+        let after = try XCTUnwrap(SpeakerMatcher(dbPath: dbPath).loadDB().first)
+        XCTAssertEqual(after.name, "Bob")
+        XCTAssertEqual(after.embeddings, before.embeddings)
+        XCTAssertEqual(after.centroidSampleCount, before.centroidSampleCount)
+        XCTAssertEqual(after.centroid, before.centroid)
+        XCTAssertEqual(after.useCount, before.useCount)
+    }
+
+    func testPostStopCorrectionOnExistingProfileLeavesTheOriginalName() {
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        store.enroll(VoiceEnrollment(name: "Bob", embedding: [1, 0, 0], speakingTime: 5))
+        XCTAssertFalse(store.enroll(VoiceEnrollment(name: "Bob", embedding: [0, 1, 0], speakingTime: 5)))
+        store.withdraw(VoiceEnrollment(name: "Bob", embedding: [0, 1, 0], speakingTime: 5), from: "Bob")
+        XCTAssertTrue(store.enroll(VoiceEnrollment(name: "Rob", embedding: [0, 1, 0], speakingTime: 5)))
+
+        XCTAssertEqual(
+            Set(SpeakerMatcher(dbPath: dbPath).loadDB().map(\.name)),
+            ["Bob", "Rob"],
+        )
+    }
+
     func testEmptyEmbeddingIsIgnored() {
         let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
         store.enroll(VoiceEnrollment(name: "Alice", embedding: [], speakingTime: 5))

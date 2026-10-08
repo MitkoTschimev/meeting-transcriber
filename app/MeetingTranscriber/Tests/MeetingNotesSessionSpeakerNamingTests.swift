@@ -7,6 +7,8 @@ private final class FakeVoiceProfileStore: VoiceProfileStoring {
     var names: [String]
     private(set) var enrolled: [VoiceEnrollment] = []
     private(set) var renames: [(from: String, to: String)] = []
+    private(set) var deleted: [String] = []
+    private(set) var withdrawals: [(from: String, enrollment: VoiceEnrollment)] = []
 
     init(names: [String] = []) {
         self.names = names
@@ -16,9 +18,12 @@ private final class FakeVoiceProfileStore: VoiceProfileStoring {
         names
     }
 
-    func enroll(_ enrollment: VoiceEnrollment) {
+    @discardableResult
+    func enroll(_ enrollment: VoiceEnrollment) -> Bool {
+        let created = !names.contains(enrollment.name)
         enrolled.append(enrollment)
-        if !names.contains(enrollment.name) { names.insert(enrollment.name, at: 0) }
+        if created { names.insert(enrollment.name, at: 0) }
+        return created
     }
 
     func renameProfile(from: String, to: String) {
@@ -26,6 +31,15 @@ private final class FakeVoiceProfileStore: VoiceProfileStoring {
         renames.append((from, to))
         names.removeAll { $0 == from }
         if !names.contains(to) { names.insert(to, at: 0) }
+    }
+
+    func deleteProfile(name: String) {
+        deleted.append(name)
+        names.removeAll { $0 == name }
+    }
+
+    func withdraw(_ enrollment: VoiceEnrollment, from name: String) {
+        withdrawals.append((from: name, enrollment: enrollment))
     }
 }
 
@@ -145,6 +159,87 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         session.retireLiveRoster()
         XCTAssertEqual(store.enrolled.count, 1, "exactly once")
         XCTAssertEqual(store.renames.count, 1)
+    }
+
+    /// Naming an existing saved profile at Stop folds this meeting into it.
+    /// Correcting to Rob must not rename the real Bob.
+    func testPostStopCorrectionOnExistingProfileLeavesTheRealBobIntact() throws {
+        let dbPath = try makeTempDirectory(prefix: "ExistingBob").appendingPathComponent("speakers.json")
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        store.enroll(VoiceEnrollment(name: "Bob", embedding: bob, speakingTime: 5))
+        let bobBefore = try XCTUnwrap(SpeakerMatcher(dbPath: dbPath).loadDB().first { $0.name == "Bob" })
+
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Bob")
+        session.finishRecording()
+
+        session.renameLiveSpeaker(id: id, to: "Rob")
+        session.retireLiveRoster()
+
+        let stored = SpeakerMatcher(dbPath: dbPath).loadDB()
+        XCTAssertEqual(Set(stored.map(\.name)), ["Bob", "Rob"])
+        let bobAfter = try XCTUnwrap(stored.first { $0.name == "Bob" })
+        XCTAssertEqual(bobAfter.centroid, bobBefore.centroid)
+        XCTAssertEqual(bobAfter.embeddings, bobBefore.embeddings)
+        XCTAssertEqual(stored.first { $0.name == "Rob" }?.centroid, alice)
+    }
+
+    func testPostStopCorrectionDoesNotRenameAPreexistingProfile() throws {
+        let store = FakeVoiceProfileStore(names: ["Bob"])
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Bob")
+        session.finishRecording()
+        XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
+        XCTAssertTrue(store.renames.isEmpty)
+
+        session.renameLiveSpeaker(id: id, to: "Rob")
+        session.retireLiveRoster()
+
+        XCTAssertTrue(store.renames.isEmpty, "the real Bob profile must not be renamed")
+        XCTAssertEqual(store.withdrawals.map(\.from), ["Bob"])
+        XCTAssertEqual(store.enrolled.map(\.name), ["Bob", "Rob"])
+        XCTAssertTrue(store.names.contains("Bob"))
+        XCTAssertTrue(store.names.contains("Rob"))
+        XCTAssertTrue(store.deleted.isEmpty)
+    }
+
+    func testMergingAfterStopDeletesAProfileThisMeetingCreated() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let one = try XCTUnwrap(hear("One", alice, in: session).speakerID)
+        let two = try XCTUnwrap(hear("Two", carol, in: session).speakerID)
+        session.renameLiveSpeaker(id: one, to: "Aice")
+        session.renameLiveSpeaker(id: two, to: "Carol")
+        session.finishRecording()
+        XCTAssertEqual(Set(store.enrolled.map(\.name)), ["Aice", "Carol"])
+
+        session.renameLiveSpeaker(id: two, to: "Aice")
+        session.retireLiveRoster()
+
+        XCTAssertEqual(store.deleted, ["Carol"])
+        XCTAssertTrue(store.renames.isEmpty)
+        XCTAssertEqual(store.enrolled.map(\.name), ["Aice", "Carol"])
+    }
+
+    func testPostStopCorrectionToGenericDeletesAProfileThisMeetingCreated() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session, channel: .mic).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Alice")
+        session.finishRecording()
+        XCTAssertEqual(store.enrolled.map(\.name), ["Alice"])
+
+        session.renameLiveSpeaker(id: id, to: "Me")
+        session.retireLiveRoster()
+
+        XCTAssertEqual(store.deleted, ["Alice"])
+        XCTAssertTrue(store.renames.isEmpty)
     }
 
     func testGenericNamesAreNotSaved() throws {

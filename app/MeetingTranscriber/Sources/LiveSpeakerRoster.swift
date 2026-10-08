@@ -20,9 +20,8 @@ struct VoiceEnrollment: Equatable, Sendable {
     /// Mean embedding of the session speaker's qualifying utterances.
     let embedding: [Float]
     let speakingTime: TimeInterval
-    /// Session voice this enrollment came from. Used to rename a stored
-    /// profile when the user corrects a name after Stop, instead of writing
-    /// a second profile. `-1` when the caller has no session id (Settings).
+    /// Session voice this enrollment came from. `-1` when the caller has no
+    /// session id (Settings).
     let speakerID: Int
 
     init(name: String, embedding: [Float], speakingTime: TimeInterval, speakerID: Int = -1) {
@@ -31,6 +30,15 @@ struct VoiceEnrollment: Equatable, Sendable {
         self.speakingTime = speakingTime
         self.speakerID = speakerID
     }
+}
+
+/// What Stop wrote for one session voice, so a later correction can rename
+/// only profiles this meeting created and leave everyone else's intact.
+struct LiveStopEnrollment: Equatable {
+    var name: String
+    var createdProfile: Bool
+    let embedding: [Float]
+    let speakingTime: TimeInterval
 }
 
 /// A speaker as the live transcript knows them in this session.
@@ -53,6 +61,10 @@ struct LiveSessionSpeaker: Equatable, Identifiable {
     var centroid: [Float]
     var centroidSampleCount: Int
     var speakingTime: TimeInterval
+    /// First-utterance embedding, kept even when it was too short to found a
+    /// centroid, so a named empty-centroid voice can reject a different
+    /// unmatched speaker instead of absorbing them.
+    var openingEmbedding: [Float]
     /// The local user (first voice on the mic channel). Cleared when the user
     /// names this voice as someone else, so it stops rendering as "(You)".
     var isYou: Bool
@@ -152,7 +164,7 @@ struct LiveSpeakerRoster: Equatable {
                     return absorb(sample, intoIndex: existing)
                 }
                 let channelCount = speakers.filter { $0.channel == channel }.count
-                if sample.duration >= Self.minQualifyingDuration, channelCount < Self.maxSpeakersPerChannel {
+                if sample.duration >= Self.minProfileRelabelDuration, channelCount < Self.maxSpeakersPerChannel {
                     return found(sample, channel: channel, label: matched, source: .profile)
                 }
             }
@@ -281,6 +293,10 @@ struct LiveSpeakerRoster: Equatable {
         let nearest = speakers[nearestIndex]
         guard nearest.centroid.isEmpty, nearest.source != .placeholder else { return false }
         if let matched = sample.matchedName, matched != nearest.label { return true }
+        if !nearest.openingEmbedding.isEmpty {
+            let distance = SpeakerMatcher.cosineDistance(sample.embedding, nearest.openingEmbedding)
+            if distance >= Self.clusterDistanceThreshold { return true }
+        }
         return false
     }
 
@@ -330,6 +346,7 @@ struct LiveSpeakerRoster: Equatable {
             centroid: qualifies ? sample.embedding : [],
             centroidSampleCount: qualifies ? 1 : 0,
             speakingTime: sample.duration,
+            openingEmbedding: sample.embedding,
             // First mic voice is the local user even when a saved profile of
             // their own voice labelled them. Only an explicit rename to
             // someone else clears this.
@@ -357,6 +374,9 @@ struct LiveSpeakerRoster: Equatable {
         )
         result.centroid = mergedCentroid.centroid ?? []
         result.centroidSampleCount = mergedCentroid.count
+        if result.openingEmbedding.isEmpty {
+            result.openingEmbedding = other.openingEmbedding
+        }
         result.isYou = keep.isYou || other.isYou
         return result
     }

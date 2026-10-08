@@ -106,8 +106,24 @@ final class LiveSpeakerRosterTests: XCTestCase {
         let carolLine = roster.resolve(sample(carol, matched: "Carol", duration: 2), channel: .app, fallbackLabel: "Remote")
 
         XCTAssertNotEqual(carolLine.speakerID, bobID)
-        XCTAssertEqual(carolLine.label, "Carol")
+        XCTAssertEqual(carolLine.label, "Speaker 2", "a 1–3 s match must not found a profile-labelled voice")
+        XCTAssertEqual(roster.speaker(id: carolLine.speakerID ?? -1)?.source, .placeholder)
         XCTAssertEqual(roster.speakers.count, 2)
+    }
+
+    func testNamedEmptyCentroidDoesNotAbsorbAnUnmatchedDifferentSpeaker() throws {
+        var roster = LiveSpeakerRoster()
+        let greeting = roster.resolve(sample(bob, duration: 0.4), channel: .app, fallbackLabel: "Remote")
+        let bobID = try XCTUnwrap(greeting.speakerID)
+        _ = roster.rename(id: bobID, to: "Bob", micLabel: "Me")
+
+        let dave = roster.resolve(sample(carol, duration: 4), channel: .app, fallbackLabel: "Remote")
+
+        XCTAssertNotEqual(dave.speakerID, bobID)
+        XCTAssertEqual(roster.speaker(id: bobID)?.label, "Bob")
+        XCTAssertEqual(roster.speaker(id: bobID)?.centroid.isEmpty, true)
+        XCTAssertEqual(roster.speakers.count, 2)
+        XCTAssertEqual(roster.pendingEnrollments(micLabel: "Me"), [])
     }
 
     func testShortUtteranceJoinsTheClosestVoiceInsteadOfFoundingOne() {
