@@ -194,6 +194,101 @@ final class WatchLoopEndPolicyTests: XCTestCase {
         XCTAssertEqual(idleStep(elapsed: 1000.5, lastAudioAt: nil), .stopMaxDurationExceeded)
     }
 
+    /// A stalled or given-up tap cannot say the call ended, so idle must not
+    /// fire even after the timeout. Max duration is the remaining bound.
+    func testUnknownCallActivitySkipsIdleTimeout() {
+        XCTAssertEqual(
+            WatchLoopEndPolicy.step(
+                config: Self.idleConfig,
+                now: t0.addingTimeInterval(400),
+                startTime: t0,
+                graceStart: nil,
+                meetingActive: true,
+                lastCallAudioAt: t0,
+                callActivityKnown: false,
+            ),
+            .continuePolling(graceStart: nil),
+        )
+    }
+
+    // MARK: - Call activity classification
+
+    func testMicSpeechCountsAsHeardEvenWhenTheAppChannelIsSilent() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -120, micLevelDBFS: -30)),
+            .heard,
+        )
+    }
+
+    func testQuietAppAndMicIsQuiet() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -80, micLevelDBFS: -80)),
+            .quiet,
+        )
+    }
+
+    func testStalledAppTapIsUnknownWhenTheMicIsQuiet() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                secondsSinceLastAppBuffer: 3,
+            )),
+            .unknown,
+        )
+    }
+
+    func testMicSpeechWinsOverAStalledTap() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -30,
+                secondsSinceLastAppBuffer: 5,
+            )),
+            .heard,
+        )
+    }
+
+    func testGivenUpCaptureIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                appCaptureGaveUp: true,
+            )),
+            .unknown,
+        )
+    }
+
+    func testSilentTrackWatchdogGaveUpIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                appSilentTrackWatchdogGaveUp: true,
+            )),
+            .unknown,
+        )
+    }
+
+    func testNeverDeliveredBufferIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                secondsSinceLastAppBuffer: nil,
+            )),
+            .unknown,
+        )
+    }
+
+    func testAppSpeechIsHeard() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -25, micLevelDBFS: -120)),
+            .heard,
+        )
+    }
+
     /// Helper: assert decision is `.continuePolling` and return the new
     /// grace-start carried forward to the next poll.
     private func expectContinue(_ decision: WatchLoopEndDecision) -> Date? {

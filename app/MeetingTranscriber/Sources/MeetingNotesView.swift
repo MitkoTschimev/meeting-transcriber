@@ -37,7 +37,8 @@ struct MeetingNotesView: View {
     var upcomingEvents: [CalendarEvent] = []
     /// Ends the current recording (same path as the menu bar's Stop
     /// Recording). nil hides the button: nothing is recording that a Stop
-    /// could end.
+    /// could end. The button asks for confirmation first, so ⌘. while
+    /// typing notes does not finalize immediately.
     var onStopRecording: (() -> Void)?
 
     @State private var tab: MeetingNotesTab
@@ -156,17 +157,7 @@ struct MeetingNotesView: View {
     /// Shown only while recording and when there is something to stop.
     @ViewBuilder private var stopButton: some View {
         if session.phase == .recording, let onStopRecording {
-            Button(role: .destructive) {
-                onStopRecording()
-            } label: {
-                Label("Stop Recording", systemImage: "stop.circle.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.large)
-            .keyboardShortcut(".", modifiers: .command)
-            .help("End this recording now. The transcript and notes are finalized as if the meeting had ended.")
-            .accessibilityIdentifier(A11yID.meetingNotesStopButton)
+            MeetingNotesStopButton(onStop: onStopRecording)
         }
     }
 

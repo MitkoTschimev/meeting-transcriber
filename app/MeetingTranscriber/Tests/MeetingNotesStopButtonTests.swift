@@ -3,7 +3,9 @@ import ViewInspector
 import XCTest
 
 /// The Meeting Notes window's Stop Recording button: visible only while a
-/// recording runs and something can stop it, and wired to that stop.
+/// recording runs and something can stop it. A press (or ⌘.) asks for
+/// confirmation so an accidental shortcut while typing notes does not
+/// finalize the recording.
 @MainActor
 final class MeetingNotesStopButtonTests: XCTestCase {
     private func makeView(session: MeetingNotesSession, onStop: (() -> Void)?) -> MeetingNotesView {
@@ -19,7 +21,15 @@ final class MeetingNotesStopButtonTests: XCTestCase {
         )
     }
 
-    func testStopButtonShowsWhileRecordingAndCallsTheStop() throws {
+    func testStopButtonShowsWhileRecording() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "GatherV2")
+        let view = makeView(session: session) {}
+
+        XCTAssertNoThrow(try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton))
+    }
+
+    func testStopButtonAsksBeforeStopping() throws {
         let session = MeetingNotesSession()
         session.begin(title: "Standup", appName: "GatherV2")
         let stops = ManagedCounter()
@@ -27,8 +37,23 @@ final class MeetingNotesStopButtonTests: XCTestCase {
 
         let button = try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton)
         try button.button().tap()
+        XCTAssertEqual(stops.value, 0, "the first press only asks; it must not finalize")
 
+        let dialog = try view.inspect().confirmationDialog()
+        XCTAssertEqual(try dialog.title().string(), "Stop recording?")
+        try dialog.actions().find(button: "Stop Recording").tap()
         XCTAssertEqual(stops.value, 1)
+    }
+
+    func testKeepRecordingDismissesWithoutStopping() throws {
+        let session = MeetingNotesSession()
+        session.begin(title: "Standup", appName: "GatherV2")
+        let stops = ManagedCounter()
+        let view = makeView(session: session) { _ = stops.increment() }
+
+        try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton).button().tap()
+        try view.inspect().confirmationDialog().actions().find(button: "Keep Recording").tap()
+        XCTAssertEqual(stops.value, 0)
     }
 
     func testNoStopButtonWithoutAStopAction() throws {

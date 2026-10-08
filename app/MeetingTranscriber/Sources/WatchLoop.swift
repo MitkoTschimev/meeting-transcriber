@@ -47,7 +47,7 @@ class WatchLoop {
     let pollInterval: TimeInterval
     let endGracePeriod: TimeInterval
     let maxDuration: TimeInterval
-    /// Silence on the call channel after which a meeting whose detector signal
+    /// Silence on both channels after which a meeting whose detector signal
     /// outlives the call is ended anyway. See `usesCallAudioIdleBackstop`.
     let callAudioIdleTimeout: TimeInterval
     let noMic: Bool
@@ -123,9 +123,12 @@ class WatchLoop {
     var endPollSleeper: Task<Void, any Error>?
     /// A meeting that was ended while its detector still reported it active
     /// (Stop pressed, or the call went silent). Kept out of detection until
-    /// its signal actually drops, so the loop does not record it again five
-    /// seconds later. See `WatchLoop+EndMeeting.swift`.
+    /// its signal actually drops *or* `parkedIdentityTTL` elapses, so the
+    /// loop does not record it again five seconds later. See
+    /// `WatchLoop+EndMeeting.swift`.
     var parkedMeeting: DetectedMeeting?
+    /// When `parkedMeeting` was parked. `nil` iff nothing is parked.
+    var parkedAt: Date?
 
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?

@@ -1,3 +1,4 @@
+import AudioTapLib
 @testable import MeetingTranscriber
 import XCTest
 
@@ -41,6 +42,23 @@ final class WatchLoopEndMeetingTests: XCTestCase {
             windowTitle: "Zoom Meeting",
             ownerName: "zoom.us",
             windowPID: 1234,
+        )
+    }
+
+    /// A browser-meeting identity (Google Meet in Chrome): consent-gated,
+    /// synthesised process name. WebRTC drops when the call ends, so the
+    /// idle backstop must not apply.
+    private func chromeMeeting() -> DetectedMeeting {
+        DetectedMeeting(
+            pattern: AppMeetingPattern(
+                appName: "Google Chrome",
+                ownerNames: ["Google Chrome"],
+                meetingPatterns: [],
+                requiresRecordingConsent: true,
+            ),
+            windowTitle: "Meet - Chrome",
+            ownerName: "Google Chrome",
+            windowPID: 200,
         )
     }
 
@@ -132,9 +150,76 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
     }
 
-    func testUsesBackstopOnlyForSynthesisedIdentities() {
+    func testUsesBackstopOnlyForSynthesisedAutoRecordIdentities() {
         XCTAssertTrue(WatchLoop.usesCallAudioIdleBackstop(gatherMeeting()))
         XCTAssertFalse(WatchLoop.usesCallAudioIdleBackstop(zoomMeeting()))
+        XCTAssertFalse(
+            WatchLoop.usesCallAudioIdleBackstop(chromeMeeting()),
+            "browser meetings drop WebRTC when the call ends; silence must not stop them",
+        )
+    }
+
+    /// Presenting while everyone else is muted: the app channel is silent
+    /// for minutes, but the mic is not, so the recording must keep going.
+    func testMicSpeechKeepsACustomAppRecordingGoing() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        recorder.micLevelDBFS = -30
+        let clock = TestClock()
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let start = clock.now
+
+        try await loop.handleMeeting(gatherMeeting())
+
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200, "mic speech is activity; only max duration ends it")
+        XCTAssertNil(loop.parkedMeeting)
+    }
+
+    /// A tap that has stopped delivering buffers cannot be read as "the call
+    /// went silent". Ending and parking would drop the rest of a live meeting.
+    func testStalledAppTapNeverCountsAsSilence() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        recorder.micLevelDBFS = -120
+        recorder.appSignalAges = ChannelSignalAges(secondsSinceLastBuffer: 5, secondsSinceLastEnergy: 5)
+        let clock = TestClock()
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let start = clock.now
+
+        try await loop.handleMeeting(gatherMeeting())
+
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
+        XCTAssertNil(loop.parkedMeeting)
+    }
+
+    func testSilentTrackWatchdogGaveUpNeverCountsAsSilence() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        recorder.appSilentTrackWatchdogGaveUp = true
+        let clock = TestClock()
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let start = clock.now
+
+        try await loop.handleMeeting(gatherMeeting())
+
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200)
+    }
+
+    func testBrowserMeetingIsNotEndedBySilence() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        let clock = TestClock()
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock, maxDuration: 1200)
+        let start = clock.now
+
+        try await loop.handleMeeting(chromeMeeting())
+
+        XCTAssertGreaterThan(clock.now.timeIntervalSince(start), 1200, "only max duration ends a browser meeting")
+        XCTAssertNil(loop.parkedMeeting)
     }
 
     // MARK: - Stop button
@@ -228,6 +313,37 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         detector.active = { _ in false }
         let loop = WatchLoop(detector: detector)
         loop.parkIfEndedEarly(gatherMeeting(), reason: .callAudioIdle)
+        XCTAssertNil(loop.parkedMeeting)
+    }
+
+    /// Built-in apps drop their call signal when the meeting ends. Parking
+    /// them on Stop would skip a back-to-back call that starts before that
+    /// leftover signal disappears.
+    func testBuiltInAppUserStopDoesNotPark() {
+        let loop = WatchLoop(detector: ScriptedMeetingDetector())
+        loop.parkIfEndedEarly(zoomMeeting(), reason: .userStopped)
+        XCTAssertNil(loop.parkedMeeting)
+        XCTAssertTrue(loop.ignoredIdentities.isEmpty)
+    }
+
+    func testParkingExpiresAfterTTLWhileTheSignalStaysUp() async {
+        let detector = ScriptedMeetingDetector()
+        let clock = TestClock()
+        let loop = WatchLoop(
+            detector: detector,
+            nowProvider: { clock.now },
+            sleepProvider: { await clock.sleep(for: $0) },
+        )
+        loop.parkIfEndedEarly(gatherMeeting(), reason: .callAudioIdle)
+        XCTAssertEqual(loop.ignoredIdentities, ["GatherV2"])
+
+        await clock.sleep(for: WatchLoop.parkedIdentityTTL - 1)
+        loop.releaseParkedMeetingIfEnded()
+        XCTAssertEqual(loop.ignoredIdentities, ["GatherV2"], "TTL not yet elapsed: stay parked")
+
+        await clock.sleep(for: 1)
+        loop.releaseParkedMeetingIfEnded()
+        XCTAssertTrue(loop.ignoredIdentities.isEmpty, "TTL elapsed: re-arm even though the signal is still up")
         XCTAssertNil(loop.parkedMeeting)
     }
 }

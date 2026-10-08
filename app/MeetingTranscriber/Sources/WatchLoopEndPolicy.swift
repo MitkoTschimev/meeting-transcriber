@@ -14,11 +14,67 @@ enum WatchLoopEndDecision: Equatable {
     /// Stop because the meeting has been inactive for the full grace
     /// period — the meeting is definitively over.
     case stopGraceExpired
-    /// Stop because the detector signal is still up but the call channel has
-    /// carried no audible audio for `callAudioIdleTimeout`. Only reachable for
+    /// Stop because the detector signal is still up but neither channel has
+    /// carried audible audio for `callAudioIdleTimeout`. Only reachable for
     /// meetings whose detector signal is known to outlive the call (see
     /// `WatchLoop.usesCallAudioIdleBackstop`).
     case stopCallAudioIdle
+}
+
+/// Evidence that a still-signalling meeting is actually still a call, from
+/// capture levels and tap health rather than the detector (whose signal can
+/// outlive the conversation).
+enum CallActivity: Equatable {
+    /// Mic or app channel is carrying speech.
+    case heard
+    /// Both channels are quiet and the app tap is still delivering buffers.
+    case quiet
+    /// The app tap cannot say whether anyone is talking (gave up, stalled, or
+    /// the silent-track watchdog stopped rebuilding) and the mic is not
+    /// speaking either. Idle must not fire: a broken tap is not an ended call.
+    case unknown
+}
+
+/// Instantaneous capture snapshot `CallActivityPolicy` classifies. Mirrors the
+/// recorder fields the end poller already reads, so the decision is
+/// unit-testable without a `RecordingProvider`.
+struct CallActivitySample: Equatable {
+    var appLevelDBFS: Double
+    var micLevelDBFS: Double
+    var appCaptureGaveUp: Bool = false
+    var appSilentTrackWatchdogGaveUp: Bool = false
+    /// `nil` means no buffer has ever arrived, which is not "quiet" — it is
+    /// a tap that never started.
+    var secondsSinceLastAppBuffer: Double? = 0
+}
+
+/// Pure classification of whether the recording still has a live call.
+enum CallActivityPolicy {
+    /// Speech through a call app sits around -30 to -20 dBFS; idle WebRTC
+    /// and comfort noise sit well below -60.
+    static let appAudibleThresholdDBFS: Double = -50
+    /// A presenter talking into the mic while everyone else is muted. A
+    /// slightly higher floor than the app channel, so office ambience does
+    /// not keep a finished Gather recording alive.
+    static let micSpeechThresholdDBFS: Double = -45
+    /// No buffer for this long means the tap has stalled, not that the far
+    /// end went quiet. Quiet still delivers buffers (at -120 dBFS).
+    static let appTapStallTimeout: TimeInterval = 2
+
+    static func classify(_ sample: CallActivitySample) -> CallActivity {
+        // Mic speech wins even when the app tap is dead: presenting while
+        // others are muted, or talking over a stalled tap, is still a call.
+        if sample.micLevelDBFS >= micSpeechThresholdDBFS { return .heard }
+        if sample.appCaptureGaveUp || sample.appSilentTrackWatchdogGaveUp {
+            return .unknown
+        }
+        guard let bufferAge = sample.secondsSinceLastAppBuffer else {
+            return .unknown
+        }
+        if bufferAge > appTapStallTimeout { return .unknown }
+        if sample.appLevelDBFS >= appAudibleThresholdDBFS { return .heard }
+        return .quiet
+    }
 }
 
 /// Static configuration for `WatchLoopEndPolicy.step` — duration limits
@@ -26,7 +82,7 @@ enum WatchLoopEndDecision: Equatable {
 struct WatchLoopEndConfig: Equatable {
     let maxDuration: TimeInterval
     let endGracePeriod: TimeInterval
-    /// How long the call channel may stay silent before a still-"active"
+    /// How long both channels may stay silent before a still-"active"
     /// meeting is treated as over. `nil` disables the backstop, which is the
     /// default and what every built-in app with a reliable end signal uses.
     var callAudioIdleTimeout: TimeInterval?
@@ -48,9 +104,12 @@ enum WatchLoopEndPolicy {
     ///     if the meeting was active on the last poll (or has never gone
     ///     inactive).
     ///   - meetingActive: Whether the meeting is active right now.
-    ///   - lastCallAudioAt: When the call channel last carried audible audio,
+    ///   - lastCallAudioAt: When either channel last carried audible audio,
     ///     or `nil` if it has not yet in this recording (then the recording
     ///     start counts, so a false start on an idle app still ends).
+    ///   - callActivityKnown: When false the app tap cannot be trusted this
+    ///     poll (stalled, gave up, silent-track). Idle must not fire; a
+    ///     broken tap is not an ended call.
     static func step(
         config: WatchLoopEndConfig,
         now: Date,
@@ -58,13 +117,16 @@ enum WatchLoopEndPolicy {
         graceStart: Date?,
         meetingActive: Bool,
         lastCallAudioAt: Date? = nil,
+        callActivityKnown: Bool = true,
     ) -> WatchLoopEndDecision {
         if now.timeIntervalSince(startTime) > config.maxDuration {
             return .stopMaxDurationExceeded
         }
         // The idle window is its own grace: it already spans minutes of
         // silence, so it stops at once instead of opening a second window.
-        if let idleTimeout = config.callAudioIdleTimeout,
+        // Skipped when the tap cannot judge — otherwise a stalled or
+        // silent-track tap would end a meeting that is still going.
+        if let idleTimeout = config.callAudioIdleTimeout, callActivityKnown,
            now.timeIntervalSince(lastCallAudioAt ?? startTime) >= idleTimeout {
             return .stopCallAudioIdle
         }

@@ -9,8 +9,9 @@ enum MeetingEndReason: Equatable {
     case signalEnded
     /// The recording hit `maxDuration`.
     case maxDuration
-    /// The detector still reported a call, but the call channel stayed silent
-    /// for `callAudioIdleTimeout` (see `WatchLoop.usesCallAudioIdleBackstop`).
+    /// The detector still reported a call, but neither channel carried
+    /// audible audio for `callAudioIdleTimeout` (see
+    /// `WatchLoop.usesCallAudioIdleBackstop`).
     case callAudioIdle
     /// The user pressed Stop (menu bar or Meeting Notes window).
     case userStopped
@@ -36,10 +37,10 @@ extension WatchLoop {
     /// not end it; short enough that a forgotten recording stops on its own.
     nonisolated static let defaultCallAudioIdleTimeout: TimeInterval = 300
 
-    /// App-channel level at or above which the call channel counts as
-    /// carrying call audio. Speech through a call app sits around -30 to
-    /// -20 dBFS; an idle WebRTC stream and comfort noise sit well below -60.
-    nonisolated static let callAudioAudibleThresholdDBFS: Double = -50
+    /// How long a parked identity stays skipped while its detector signal
+    /// remains up. After this, detection re-arms so a second conversation in
+    /// the same always-on app (Gather still in the office) is recorded.
+    nonisolated static let parkedIdentityTTL: TimeInterval = 30 * 60
 
     /// Whether an auto-detected meeting (not a manual recording) is recording,
     /// i.e. whether `endCurrentMeeting()` has anything to end.
@@ -57,39 +58,58 @@ extension WatchLoop {
         logger.info("Stop requested for the detected meeting")
     }
 
-    /// Whether the silence backstop applies to a meeting. Only identities
-    /// synthesised for apps the detector does not know (custom watch apps,
-    /// Electron hosts, browser processes): their signal is the generic WebRTC
-    /// assertion / mic use, which an always-on app holds outside calls. The
-    /// built-in apps (Teams, Zoom, Webex, FaceTime, ...) have call-scoped
-    /// signals and keep ending on those alone.
+    /// Whether the silence backstop applies to a meeting. Only synthesised
+    /// identities that auto-record (custom watch apps, Electron hosts such as
+    /// Gather): their signal is the generic WebRTC assertion / mic use, which
+    /// an always-on app holds outside calls. Built-in apps (Teams, Zoom, …)
+    /// have call-scoped signals. Browser meetings (consent-gated) drop WebRTC
+    /// when the call ends, and one-sided presenting is common there, so
+    /// silence must not end them.
     static func usesCallAudioIdleBackstop(_ meeting: DetectedMeeting) -> Bool {
         AppMeetingPattern.forAppName(meeting.pattern.appName) == nil
+            && !meeting.pattern.requiresRecordingConsent
     }
 
-    /// Whether the call (app-audio) channel carries audible audio right now.
-    /// Answers true when it cannot judge (no recorder, or the app capture gave
-    /// up), so a broken tap never ends a meeting that may well be running.
-    func callAudioIsAudible() -> Bool {
-        guard let recorder = activeRecorder, !recorder.appCaptureGaveUp else { return true }
-        return recorder.appLevelDBFS >= Self.callAudioAudibleThresholdDBFS
+    /// Classify whether the recording still has a live call, from mic *and*
+    /// app levels plus tap health. No recorder, or a tap that cannot judge,
+    /// is `.unknown` so a broken tap never ends a meeting that may be running.
+    func currentCallActivity() -> CallActivity {
+        guard let recorder = activeRecorder else { return .unknown }
+        return CallActivityPolicy.classify(CallActivitySample(
+            appLevelDBFS: recorder.appLevelDBFS,
+            micLevelDBFS: recorder.micLevelDBFS,
+            appCaptureGaveUp: recorder.appCaptureGaveUp,
+            appSilentTrackWatchdogGaveUp: recorder.appSilentTrackWatchdogGaveUp,
+            secondsSinceLastAppBuffer: recorder.appSignalAges.secondsSinceLastBuffer,
+        ))
     }
 
-    /// Identities detection skips this poll.
+    /// Identities detection skips this poll. Empty once parking has expired
+    /// even if the detector signal is still up, so a later conversation in
+    /// the same always-on app is recorded.
     var ignoredIdentities: Set<String> {
-        guard let parkedMeeting else { return [] }
+        guard let parkedMeeting, !parkedIdentityHasExpired else { return [] }
         return [parkedMeeting.pattern.appName]
     }
 
+    var parkedIdentityHasExpired: Bool {
+        guard let parkedAt else { return parkedMeeting != nil }
+        return nowProvider().timeIntervalSince(parkedAt) >= Self.parkedIdentityTTL
+    }
+
     /// Park a meeting that ended while its detector still reported it, so the
-    /// next poll does not record it again.
+    /// next poll does not record it again. Only synthesised always-on apps:
+    /// built-in clients have a real call-ended signal, and parking them would
+    /// skip a back-to-back call that starts before that signal drops.
     func parkIfEndedEarly(_ meeting: DetectedMeeting, reason: MeetingEndReason) {
         switch reason {
         case .userStopped, .callAudioIdle:
+            guard Self.usesCallAudioIdleBackstop(meeting) else { return }
             guard detector.isMeetingActive(meeting) else { return }
             parkedMeeting = meeting
+            parkedAt = nowProvider()
             logger.info(
-                "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops",
+                "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops or \(Int(Self.parkedIdentityTTL / 60)) min pass",
             )
 
         case .signalEnded, .maxDuration, .cancelled:
@@ -97,12 +117,23 @@ extension WatchLoop {
         }
     }
 
-    /// Release the parked meeting once its detector signal is gone, so the
-    /// app's next call is detected normally.
+    /// Release the parked meeting once its detector signal is gone, or the
+    /// parking TTL has elapsed, so the app's next call is detected normally.
     func releaseParkedMeetingIfEnded() {
-        guard let parked = parkedMeeting, !detector.isMeetingActive(parked) else { return }
+        guard let parked = parkedMeeting else { return }
+        let expired = parkedIdentityHasExpired
+        guard expired || !detector.isMeetingActive(parked) else { return }
         parkedMeeting = nil
-        logger.info("\(parked.pattern.appName, privacy: .public) call signal ended; detecting it again")
+        parkedAt = nil
+        if expired {
+            logger.info(
+                "\(parked.pattern.appName, privacy: .public) parking expired; detecting it again",
+            )
+        } else {
+            logger.info(
+                "\(parked.pattern.appName, privacy: .public) call signal ended; detecting it again",
+            )
+        }
     }
 
     /// Sleep one poll interval between end checks, waking early (without
@@ -144,7 +175,14 @@ extension WatchLoop {
                 return .userStopped
             }
             let now = nowProvider()
-            if callAudioIsAudible() { lastCallAudioAt = now }
+            let activity = currentCallActivity()
+            switch activity {
+            case .heard:
+                lastCallAudioAt = now
+
+            case .quiet, .unknown:
+                break
+            }
             let decision = WatchLoopEndPolicy.step(
                 config: config,
                 now: now,
@@ -152,6 +190,7 @@ extension WatchLoop {
                 graceStart: graceStart,
                 meetingActive: detector.isMeetingActive(meeting),
                 lastCallAudioAt: lastCallAudioAt,
+                callActivityKnown: activity != .unknown,
             )
             switch decision {
             case .stopMaxDurationExceeded:

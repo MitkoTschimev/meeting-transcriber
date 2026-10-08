@@ -144,6 +144,8 @@ enum A11yID {
     static let meetingNotesAskBar = "meetingNotesAskBar"
     static let meetingNotesAgenda = "meetingNotesAgenda"
     static let meetingNotesStopButton = "meetingNotesStopButton"
+    static let meetingNotesConfirmStopButton = "meetingNotesConfirmStopButton"
+    static let meetingNotesKeepRecordingButton = "meetingNotesKeepRecordingButton"
     static let autoOpenMeetingNotesToggle = "autoOpenMeetingNotesToggle"
     static let meetingNotesSummaryError = "meetingNotesSummaryError"
     static let meetingNotesRetryButton = "meetingNotesRetryButton"
