@@ -47,6 +47,9 @@ class WatchLoop {
     let pollInterval: TimeInterval
     let endGracePeriod: TimeInterval
     let maxDuration: TimeInterval
+    /// Silence on both channels after which a meeting whose detector signal
+    /// outlives the call is ended anyway. See `usesCallAudioIdleBackstop`.
+    let callAudioIdleTimeout: TimeInterval
     let noMic: Bool
     let micDeviceUID: String?
     /// Dynamic accessor — read at recording-start time so toggling the setting
@@ -112,6 +115,30 @@ class WatchLoop {
 
     private var watchTask: Task<Void, Never>?
 
+    /// Set by `endCurrentMeeting()`; read by `waitForMeetingEnd`. Internal
+    /// because `WatchLoop+EndMeeting.swift` owns the transitions.
+    var endRequested = false
+    /// The sleep between end polls, held so a Stop press wakes the poller
+    /// instead of waiting out the poll interval.
+    var endPollSleeper: Task<Void, any Error>?
+    /// A meeting that was ended while its detector still reported it active
+    /// (user Stop on any app, or idle-audio on an always-on app). Kept out of
+    /// detection until its signal actually drops; always-on apps also re-arm
+    /// after `parkedIdentityTTL`.
+    var parkedMeeting: DetectedMeeting?
+    /// When `parkedMeeting` was parked. `nil` iff nothing is parked.
+    var parkedAt: Date?
+    /// User Stop on Teams/Zoom/browsers stays parked until the call signal
+    /// drops. Always-on apps (and idle-audio parks) may expire after the TTL.
+    var parkedUntilSignalDrops = false
+    /// True once either channel carried sustained call audio in this recording.
+    /// Idle-ended recordings with this still false are discarded.
+    var heardCallAudioDuringRecording = false
+    /// Set when `discardSilentIdleRecordingIfNeeded` drops a silent idle take.
+    var discardedSilentIdleRecording = false
+    /// Typed Meeting Notes thoughts. A silent idle take with notes is kept.
+    var hasTypedNotes: () -> Bool = { false }
+
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?
 
@@ -122,6 +149,7 @@ class WatchLoop {
         pollInterval: TimeInterval = 3.0,
         endGracePeriod: TimeInterval = 15.0,
         maxDuration: TimeInterval = 14400,
+        callAudioIdleTimeout: TimeInterval = WatchLoop.defaultCallAudioIdleTimeout,
         noMic: Bool = false,
         micDeviceUID: String? = nil,
         verboseDiagnostics: @escaping () -> Bool = { false },
@@ -145,6 +173,7 @@ class WatchLoop {
         self.pollInterval = pollInterval
         self.endGracePeriod = endGracePeriod
         self.maxDuration = maxDuration
+        self.callAudioIdleTimeout = callAudioIdleTimeout
         self.noMic = noMic
         self.micDeviceUID = micDeviceUID
         self.verboseDiagnostics = verboseDiagnostics
@@ -318,9 +347,10 @@ class WatchLoop {
             // Re-checked because the answer may have landed while another
             // meeting was recording, which blocks this loop for its duration —
             // by now the approved call can be long over.
+            releaseParkedMeetingIfEnded()
             if let approved = takeApprovedConsentMeeting(), detector.isMeetingActive(approved) {
                 if await runMeeting(approved) { return }
-            } else if let meeting = detector.checkOnce() {
+            } else if let meeting = detector.checkOnce(ignoring: ignoredIdentities) {
                 // Browser meetings (issue #503) ask before recording; native
                 // meetings skip this (flag false). See WatchLoop+Consent.swift.
                 // Asking does NOT block this loop — that is the whole point:
@@ -380,6 +410,7 @@ class WatchLoop {
             next.detail = "Recording: \(title)"
         }
 
+        endRequested = false
         let source = RecordingSource.forApp(pid: meeting.windowPID, noMic: noMic)
         let recorder = await recorderFactory()
         try recorder.start(
@@ -408,14 +439,21 @@ class WatchLoop {
         // naming dialog) because the cancellation propagated past `stop()` and
         // `enqueueRecording()`. `recorder.stop()` + `enqueueRecording()` below
         // are synchronous, so they still run to completion on the cancelled task.
+        let endReason: MeetingEndReason
         do {
-            try await waitForMeetingEnd(meeting)
+            endReason = try await waitForMeetingEnd(meeting)
+            parkIfEndedEarly(meeting, reason: endReason)
         } catch is CancellationError {
             logger.info("Watch cancelled mid-recording — finalizing in-flight recording")
+            endReason = .cancelled
         }
+        endRequested = false
 
         // Stop recording
         let recording = try recorder.stop()
+        if discardSilentIdleRecordingIfNeeded(reason: endReason, recording: recording) {
+            return
+        }
 
         // --- Enqueue for background processing ---
         enqueueRecording(
@@ -425,39 +463,6 @@ class WatchLoop {
             trigger: .auto,
             participants: participants,
         )
-    }
-
-    // MARK: - Meeting End Detection
-
-    func waitForMeetingEnd(_ meeting: DetectedMeeting) async throws {
-        var graceStart: Date?
-        let startTime = nowProvider()
-        let config = WatchLoopEndConfig(
-            maxDuration: maxDuration,
-            endGracePeriod: endGracePeriod,
-        )
-
-        while !Task.isCancelled {
-            let decision = WatchLoopEndPolicy.step(
-                config: config,
-                now: nowProvider(),
-                startTime: startTime,
-                graceStart: graceStart,
-                meetingActive: detector.isMeetingActive(meeting),
-            )
-            switch decision {
-            case .stopMaxDurationExceeded:
-                logger.info("Max recording duration reached (\(Int(self.maxDuration))s)")
-                return
-
-            case .stopGraceExpired:
-                return
-
-            case let .continuePolling(newGraceStart):
-                graceStart = newGraceStart
-            }
-            try await sleepProvider(pollInterval)
-        }
     }
 
     // MARK: - Helpers

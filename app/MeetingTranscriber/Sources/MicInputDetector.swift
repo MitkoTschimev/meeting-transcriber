@@ -169,6 +169,10 @@ class MicInputDetector: MeetingDetecting {
     }
 
     func checkOnce() -> DetectedMeeting? {
+        checkOnce(ignoring: [])
+    }
+
+    func checkOnce(ignoring ignored: Set<String>) -> DetectedMeeting? {
         // All four toggles default to off, so most installs run this detector
         // with an empty pattern set. Skip the whole round then: no Core Audio
         // enumeration every poll, and no diagnostic naming every mic-using
@@ -185,6 +189,7 @@ class MicInputDetector: MeetingDetecting {
                 continue
             }
             let appName = pattern.meetingPattern.appName
+            if ignored.contains(appName) { continue }
             if let until = cooldownUntil[appName], Date() < until { continue }
             guard !hitsThisRound.contains(appName) else { continue }
             hitsThisRound.insert(appName)
@@ -351,8 +356,12 @@ final class CompositeMeetingDetector: MeetingDetecting {
     }
 
     func checkOnce() -> DetectedMeeting? {
+        checkOnce(ignoring: [])
+    }
+
+    func checkOnce(ignoring ignored: Set<String>) -> DetectedMeeting? {
         for detector in detectors {
-            if let meeting = detector.checkOnce() {
+            if let meeting = detector.checkOnce(ignoring: ignored) {
                 return meeting
             }
         }

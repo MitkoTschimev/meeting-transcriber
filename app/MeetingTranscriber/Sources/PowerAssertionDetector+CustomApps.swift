@@ -14,6 +14,7 @@ extension PowerAssertionDetector {
 
     func recordHits(
         from assertions: [Int32: [[String: Any]]],
+        ignoring ignored: Set<String>,
         into hitsThisRound: inout Set<String>,
         firstMatch: inout [String: (resolved: ResolvedOpenIdentity, pattern: AssertionPattern)],
     ) {
@@ -31,6 +32,7 @@ extension PowerAssertionDetector {
                         assertName: assertName,
                         assertType: assertType,
                         pattern: pattern,
+                        ignored: ignored,
                         hitsThisRound: &hitsThisRound,
                         firstMatch: &firstMatch,
                     )
@@ -45,6 +47,7 @@ extension PowerAssertionDetector {
         assertName: String,
         assertType: String,
         pattern: AssertionPattern,
+        ignored: Set<String>,
         hitsThisRound: inout Set<String>,
         firstMatch: inout [String: (resolved: ResolvedOpenIdentity, pattern: AssertionPattern)],
     ) {
@@ -65,6 +68,10 @@ extension PowerAssertionDetector {
         // Deny list only gates consent-required identities. Adding a custom
         // app is an explicit opt-in and wins.
         if resolved.requiresRecordingConsent, isIdentityDenied(resolved.key) { return }
+        // A parked meeting (ended early while still signalling) must not
+        // accumulate hits: a permanently confirmed key would be returned every
+        // poll and could shadow another app's confirmation.
+        if ignored.contains(resolved.key) { return }
         if let until = cooldownUntil[resolved.key], Date() < until { return }
         guard !hitsThisRound.contains(resolved.key) else { return }
 

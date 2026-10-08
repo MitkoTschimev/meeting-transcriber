@@ -546,6 +546,10 @@ final class WatchingController {
     /// `notifyOnRecording` only fires "Meeting Detected" notifications for the
     /// auto-detect path; manual recording emits its own start notification.
     private func attachStateChangeHandler(to loop: WatchLoop, notifyOnRecording: Bool) {
+        loop.hasTypedNotes = { [weak self] in
+            let text = self?.meetingNotes.thoughts ?? ""
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         loop.onStateChange = { [weak self, weak loop, notifier] oldState, newState in
             // Leaving `.recording` (natural meeting end, manual stop, or
             // mid-recording cancel — all route through this transition) is the

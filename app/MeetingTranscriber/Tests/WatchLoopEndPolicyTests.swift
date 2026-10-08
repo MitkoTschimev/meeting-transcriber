@@ -147,6 +147,180 @@ final class WatchLoopEndPolicyTests: XCTestCase {
         // at t=13 proves the reset.
     }
 
+    // MARK: - Call-audio idle backstop
+
+    private static let idleConfig = WatchLoopEndConfig(
+        maxDuration: 1000, endGracePeriod: 10, callAudioIdleTimeout: 300,
+    )
+
+    private func idleStep(elapsed: TimeInterval, lastAudioAt: TimeInterval?, active: Bool = true) -> WatchLoopEndDecision {
+        WatchLoopEndPolicy.step(
+            config: Self.idleConfig,
+            now: t0.addingTimeInterval(elapsed),
+            startTime: t0,
+            graceStart: nil,
+            meetingActive: active,
+            lastCallAudioAt: lastAudioAt.map { t0.addingTimeInterval($0) },
+        )
+    }
+
+    /// The Gather case: the detector still says "in a call", but nobody has
+    /// been heard for the whole idle window, so the recording ends.
+    func testStillActiveMeetingStopsAfterCallAudioIdleTimeout() {
+        XCTAssertEqual(idleStep(elapsed: 400, lastAudioAt: 100), .stopCallAudioIdle)
+    }
+
+    func testRecentCallAudioKeepsAnActiveMeetingRecording() {
+        XCTAssertEqual(idleStep(elapsed: 399, lastAudioAt: 100), .continuePolling(graceStart: nil))
+    }
+
+    /// A false start on an idle app (never any call audio) counts from the
+    /// recording start instead of running forever.
+    func testNoCallAudioEverCountsFromRecordingStart() {
+        XCTAssertEqual(idleStep(elapsed: 299, lastAudioAt: nil), .continuePolling(graceStart: nil))
+        XCTAssertEqual(idleStep(elapsed: 300, lastAudioAt: nil), .stopCallAudioIdle)
+    }
+
+    /// Without a timeout (every built-in app) silence never ends a meeting
+    /// that its detector still reports.
+    func testNoIdleTimeoutMeansSilenceNeverStops() {
+        XCTAssertEqual(
+            step(meetingActive: true, elapsedSinceStart: 99),
+            .continuePolling(graceStart: nil),
+        )
+    }
+
+    func testMaxDurationStillWinsOverIdle() {
+        XCTAssertEqual(idleStep(elapsed: 1000.5, lastAudioAt: nil), .stopMaxDurationExceeded)
+    }
+
+    /// A stalled or given-up tap cannot say the call ended, so idle must not
+    /// fire even after the timeout. Max duration is the remaining bound.
+    func testUnknownCallActivitySkipsIdleTimeout() {
+        XCTAssertEqual(
+            WatchLoopEndPolicy.step(
+                config: Self.idleConfig,
+                now: t0.addingTimeInterval(400),
+                startTime: t0,
+                graceStart: nil,
+                meetingActive: true,
+                lastCallAudioAt: t0,
+                callActivityKnown: false,
+            ),
+            .continuePolling(graceStart: nil),
+        )
+    }
+
+    // MARK: - Call activity classification
+
+    func testMicSpeechCountsAsHeardEvenWhenTheAppChannelIsSilent() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -120, micLevelDBFS: -30)),
+            .heard,
+        )
+    }
+
+    func testQuietAppAndMicIsQuiet() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -80, micLevelDBFS: -80)),
+            .quiet,
+        )
+    }
+
+    func testStalledAppTapIsUnknownWhenTheMicIsQuiet() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                secondsSinceLastAppBuffer: 3,
+            )),
+            .unknown,
+        )
+    }
+
+    func testMicSpeechWinsOverAStalledTap() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -30,
+                secondsSinceLastAppBuffer: 5,
+            )),
+            .heard,
+        )
+    }
+
+    func testGivenUpCaptureIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                appCaptureGaveUp: true,
+            )),
+            .unknown,
+        )
+    }
+
+    func testSilentTrackWatchdogGaveUpIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                appSilentTrackWatchdogGaveUp: true,
+            )),
+            .unknown,
+        )
+    }
+
+    func testNeverDeliveredBufferIsUnknown() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(
+                appLevelDBFS: -120,
+                micLevelDBFS: -120,
+                secondsSinceLastAppBuffer: nil,
+            )),
+            .unknown,
+        )
+    }
+
+    func testAppSpeechIsHeard() {
+        XCTAssertEqual(
+            CallActivityPolicy.classify(CallActivitySample(appLevelDBFS: -25, micLevelDBFS: -120)),
+            .heard,
+        )
+        XCTAssertTrue(CallActivityPolicy.heardFromApp(CallActivitySample(appLevelDBFS: -25, micLevelDBFS: -120)))
+        XCTAssertFalse(CallActivityPolicy.heardFromApp(CallActivitySample(appLevelDBFS: -120, micLevelDBFS: -30)))
+    }
+
+    func testRecordingFileGuardUsesPathComponentsNotPrefix() {
+        let recordings = URL(fileURLWithPath: "/tmp/recordings")
+        XCTAssertTrue(RecordingFileGuard.isInside(
+            URL(fileURLWithPath: "/tmp/recordings/mix.wav"),
+            directory: recordings,
+        ))
+        XCTAssertFalse(
+            RecordingFileGuard.isInside(
+                URL(fileURLWithPath: "/tmp/recordings-old/mix.wav"),
+                directory: recordings,
+            ),
+            "hasPrefix would have treated recordings-old as inside recordings",
+        )
+    }
+
+    func testUnknownFallsBackToQuietAfterTimeout() {
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.unknown, unknownDuration: CallActivityPolicy.unknownQuietFallback - 1),
+            .unknown,
+        )
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.unknown, unknownDuration: CallActivityPolicy.unknownQuietFallback),
+            .quiet,
+        )
+        XCTAssertEqual(
+            CallActivityPolicy.resolvingUnknown(.heard, unknownDuration: CallActivityPolicy.unknownQuietFallback),
+            .heard,
+        )
+    }
+
     /// Helper: assert decision is `.continuePolling` and return the new
     /// grace-start carried forward to the next poll.
     private func expectContinue(_ decision: WatchLoopEndDecision) -> Date? {
