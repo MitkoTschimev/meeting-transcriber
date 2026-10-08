@@ -236,6 +236,58 @@ final class MeetingNotesViewTests: XCTestCase {
         XCTAssertNoThrow(try body.find(text: "Record-only is on — notes are not generated."))
     }
 
+    func testSummaryShowsRetryForSavedChatCompletionFailure() throws {
+        let dir = try makeTempDirectory(prefix: "notes-view-retry")
+        let transcriptURL = dir.appendingPathComponent("t.txt")
+        let notesURL = dir.appendingPathComponent("n.md")
+        try "[00:27] Mitko: Hey".write(to: transcriptURL, atomically: true, encoding: .utf8)
+        try """
+        chat completion failed
+
+        ---
+
+        ## Full Transcript
+
+        [00:27] Mitko: Hey Ähm, hast du das in Google Meetup oder hier?
+        """.write(to: notesURL, atomically: true, encoding: .utf8)
+
+        let session = MeetingNotesSession()
+        session.begin(title: "Gather Tray Menu", appName: "GatherV2")
+        session.finishRecording()
+        var job = PipelineJob(
+            meetingTitle: "Gather Tray Menu",
+            appName: "GatherV2",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date(),
+        )
+        job.state = .done
+        job.transcriptPath = transcriptURL
+        job.protocolPath = notesURL
+        let queue = PipelineQueue()
+        queue.jobs = [job]
+        session.sync(from: queue)
+
+        let view = MeetingNotesView(
+            session: session,
+            settings: makeSettings(),
+            queue: queue,
+            liveTranscriptionEnabled: false,
+            initialTab: .summary,
+        )
+        let body = try view.inspect()
+        XCTAssertNoThrow(try body.find(text: "Notes could not be generated (chat completion failed). The transcript was saved."))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSummaryError))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesRetryButton))
+        XCTAssertNoThrow(try body.find(button: "Retry"))
+        XCTAssertThrowsError(try body.find(text: "Hey Ähm, hast du das in Google Meetup oder hier?"))
+        XCTAssertFalse(
+            try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStylePicker).isDisabled(),
+        )
+    }
+
     private func makeSettings() -> AppSettings {
         let suite = "MeetingNotesViewTests-\(getpid())-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard
