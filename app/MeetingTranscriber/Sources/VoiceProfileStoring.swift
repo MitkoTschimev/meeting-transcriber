@@ -8,6 +8,9 @@ protocol VoiceProfileStoring: AnyObject {
     func savedVoiceNames() -> [String]
     /// Add (or fold into) the saved profile for `enrollment.name`.
     func enroll(_ enrollment: VoiceEnrollment)
+    /// Rename a stored profile. A post-Stop correction must rename, not
+    /// create a second profile under the new name.
+    func renameProfile(from: String, to: String)
 }
 
 /// Production store: the same on-device `speakers.json` (Application Support,
@@ -54,6 +57,14 @@ final class SpeakerDBVoiceProfileStore: VoiceProfileStoring {
             embeddings: [label: enrollment.embedding],
             speakingTimes: [label: enrollment.speakingTime],
         )
+        namesLoaded = false
+        cachedModificationDate = nil
+        onChange()
+    }
+
+    func renameProfile(from: String, to: String) {
+        guard from != to else { return }
+        SpeakerMatcher(dbPath: dbPath).renameSpeaker(from: from, to: to)
         namesLoaded = false
         cachedModificationDate = nil
         onChange()

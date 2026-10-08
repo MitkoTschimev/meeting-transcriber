@@ -38,6 +38,17 @@ final class VoiceProfileStoreTests: XCTestCase { // swiftlint:disable:this balan
         XCTAssertEqual(alice.useCount, 2)
     }
 
+    func testRenameProfileRenamesRatherThanDuplicating() {
+        var changes = 0
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath) { changes += 1 }
+        store.enroll(VoiceEnrollment(name: "Aice", embedding: [1, 0, 0], speakingTime: 5))
+        store.renameProfile(from: "Aice", to: "Bob")
+
+        XCTAssertEqual(SpeakerMatcher(dbPath: dbPath).loadDB().map(\.name), ["Bob"])
+        XCTAssertEqual(store.savedVoiceNames(), ["Bob"])
+        XCTAssertEqual(changes, 2)
+    }
+
     func testEmptyEmbeddingIsIgnored() {
         let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
         store.enroll(VoiceEnrollment(name: "Alice", embedding: [], speakingTime: 5))

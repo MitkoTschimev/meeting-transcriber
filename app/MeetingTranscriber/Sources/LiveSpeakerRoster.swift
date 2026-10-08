@@ -20,6 +20,17 @@ struct VoiceEnrollment: Equatable, Sendable {
     /// Mean embedding of the session speaker's qualifying utterances.
     let embedding: [Float]
     let speakingTime: TimeInterval
+    /// Session voice this enrollment came from. Used to rename a stored
+    /// profile when the user corrects a name after Stop, instead of writing
+    /// a second profile. `-1` when the caller has no session id (Settings).
+    let speakerID: Int
+
+    init(name: String, embedding: [Float], speakingTime: TimeInterval, speakerID: Int = -1) {
+        self.name = name
+        self.embedding = embedding
+        self.speakingTime = speakingTime
+        self.speakerID = speakerID
+    }
 }
 
 /// A speaker as the live transcript knows them in this session.
@@ -130,9 +141,21 @@ struct LiveSpeakerRoster: Equatable {
         // A voice founded by a short opening line has no centroid yet. The
         // next qualifying sample of the same channel belongs to it — otherwise
         // "hi" becomes Me and the next sentence becomes Speaker 1 for the rest
-        // of the meeting.
+        // of the meeting. A *named* empty-centroid voice must not swallow a
+        // sample the matcher assigned to someone else (Bob's "hi" then Carol).
         if let nearest, nearestHasNoCentroid {
-            return absorb(sample, intoIndex: nearest.index)
+            if emptyCentroidMayAbsorb(sample, nearestIndex: nearest.index) {
+                return absorb(sample, intoIndex: nearest.index)
+            }
+            if let matched = sample.matchedName {
+                if let existing = speakers.firstIndex(where: { $0.channel == channel && $0.label == matched }) {
+                    return absorb(sample, intoIndex: existing)
+                }
+                let channelCount = speakers.filter { $0.channel == channel }.count
+                if sample.duration >= Self.minQualifyingDuration, channelCount < Self.maxSpeakersPerChannel {
+                    return found(sample, channel: channel, label: matched, source: .profile)
+                }
+            }
         }
         let channelCount = speakers.filter { $0.channel == channel }.count
         let canFound = channelCount == 0
@@ -158,6 +181,9 @@ struct LiveSpeakerRoster: Equatable {
         if let index = speakers.firstIndex(where: { $0.channel == channel && $0.label == matched }) {
             return absorb(sample, intoIndex: index)
         }
+        if let nearest, emptyCentroidConflicts(sample, nearestIndex: nearest.index) {
+            return found(sample, channel: channel, label: matched, source: .profile)
+        }
         if let nearest, withinThreshold || speakers[nearest.index].centroid.isEmpty {
             switch speakers[nearest.index].source {
             case .placeholder:
@@ -169,7 +195,9 @@ struct LiveSpeakerRoster: Equatable {
 
             case .profile, .user:
                 // Already named (saved profile or the user). A later Carol
-                // hit must not relabel Bob's voice or split a new one.
+                // hit must not relabel Bob's voice — unless that voice has
+                // no centroid yet, which `emptyCentroidConflicts` already
+                // routed to a new / matched voice above.
                 return absorb(sample, intoIndex: nearest.index)
             }
         }
@@ -188,6 +216,7 @@ struct LiveSpeakerRoster: Equatable {
                 name: speaker.label,
                 embedding: speaker.centroid,
                 speakingTime: speaker.speakingTime,
+                speakerID: speaker.id,
             )
         }
     }
@@ -220,7 +249,12 @@ struct LiveSpeakerRoster: Equatable {
         let enrollment: VoiceEnrollment? = if isGeneric || target.centroid.isEmpty {
             nil
         } else {
-            VoiceEnrollment(name: name, embedding: target.centroid, speakingTime: target.speakingTime)
+            VoiceEnrollment(
+                name: name,
+                embedding: target.centroid,
+                speakingTime: target.speakingTime,
+                speakerID: target.id,
+            )
         }
         return RenameOutcome(speakerID: target.id, label: name, affectedIDs: affected, enrollment: enrollment)
     }
@@ -234,6 +268,21 @@ struct LiveSpeakerRoster: Equatable {
     }
 
     // MARK: - Internals
+
+    /// A centroid-less placeholder still absorbs the next sentence (short
+    /// "hi" then the rest of your line). A named / profile voice only
+    /// absorbs a sample that is not a strong match for a *different*
+    /// saved profile or named voice.
+    private func emptyCentroidMayAbsorb(_ sample: LiveSpeakerSample, nearestIndex: Int) -> Bool {
+        !emptyCentroidConflicts(sample, nearestIndex: nearestIndex)
+    }
+
+    private func emptyCentroidConflicts(_ sample: LiveSpeakerSample, nearestIndex: Int) -> Bool {
+        let nearest = speakers[nearestIndex]
+        guard nearest.centroid.isEmpty, nearest.source != .placeholder else { return false }
+        if let matched = sample.matchedName, matched != nearest.label { return true }
+        return false
+    }
 
     private func nearestSpeaker(to embedding: [Float], channel: LiveCaptionChannel) -> (index: Int, distance: Float)? {
         var best: (index: Int, distance: Float)?

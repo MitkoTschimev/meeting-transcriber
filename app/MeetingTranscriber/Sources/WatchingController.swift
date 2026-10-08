@@ -550,6 +550,9 @@ final class WatchingController {
             let text = self?.meetingNotes.thoughts ?? ""
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        loop.beforeEnqueueRecording = { [weak self] in
+            self?.meetingNotes.enrollLiveNamesKnownNow()
+        }
         loop.onStateChange = { [weak self, weak loop, notifier] oldState, newState in
             // Leaving `.recording` (natural meeting end, manual stop, or
             // mid-recording cancel — all route through this transition) is the

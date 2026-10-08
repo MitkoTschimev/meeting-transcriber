@@ -6,6 +6,7 @@ import XCTest
 private final class FakeVoiceProfileStore: VoiceProfileStoring {
     var names: [String]
     private(set) var enrolled: [VoiceEnrollment] = []
+    private(set) var renames: [(from: String, to: String)] = []
 
     init(names: [String] = []) {
         self.names = names
@@ -18,6 +19,13 @@ private final class FakeVoiceProfileStore: VoiceProfileStoring {
     func enroll(_ enrollment: VoiceEnrollment) {
         enrolled.append(enrollment)
         if !names.contains(enrollment.name) { names.insert(enrollment.name, at: 0) }
+    }
+
+    func renameProfile(from: String, to: String) {
+        guard from != to else { return }
+        renames.append((from, to))
+        names.removeAll { $0 == from }
+        if !names.contains(to) { names.insert(to, at: 0) }
     }
 }
 
@@ -87,13 +95,13 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         XCTAssertEqual(session.savedVoiceNames, ["Dana"])
 
         session.finishRecording()
-        XCTAssertTrue(store.enrolled.isEmpty, "Stop is not retirement; names after Stop must still be able to replace this")
-
-        session.retireLiveRoster()
-
-        XCTAssertEqual(store.enrolled.map(\.name), ["Alice"])
+        XCTAssertEqual(store.enrolled.map(\.name), ["Alice"], "names known at Stop must be in speakers.json for the pipeline")
         XCTAssertEqual(store.enrolled.first?.embedding, alice)
         XCTAssertEqual(session.savedVoiceNames, ["Alice", "Dana"])
+
+        session.retireLiveRoster()
+        XCTAssertEqual(store.enrolled.map(\.name), ["Alice"], "retire must not enroll a second copy")
+        XCTAssertTrue(store.renames.isEmpty)
     }
 
     func testCorrectingANameEnrollsOnlyTheFinalOne() throws {
@@ -105,9 +113,11 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         session.renameLiveSpeaker(id: id, to: "Aice")
         session.renameLiveSpeaker(id: id, to: "Bob")
         session.finishRecording()
+        XCTAssertEqual(store.enrolled.map(\.name), ["Bob"], "a pre-Stop correction enrolls only the final name")
         session.retireLiveRoster()
 
         XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
+        XCTAssertTrue(store.renames.isEmpty)
         XCTAssertEqual(session.lines.map(\.speaker), ["Bob"])
     }
 
@@ -123,15 +133,18 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         session.renameLiveSpeaker(id: id, to: "Aice")
         session.finishRecording()
         XCTAssertTrue(session.canNameLiveSpeakers, "the live transcript is still on screen")
-        XCTAssertTrue(store.enrolled.isEmpty)
+        XCTAssertEqual(store.enrolled.map(\.name), ["Aice"])
 
         session.renameLiveSpeaker(id: id, to: "Bob")
         session.retireLiveRoster()
 
-        XCTAssertEqual(store.enrolled.map(\.name), ["Bob"])
+        XCTAssertEqual(store.enrolled.map(\.name), ["Aice"], "the stored profile is renamed, not enrolled twice")
+        XCTAssertEqual(store.renames.map { "\($0.from)->\($0.to)" }, ["Aice->Bob"])
+        XCTAssertEqual(session.savedVoiceNames, ["Bob"])
         XCTAssertEqual(session.lines.map(\.speaker), ["Bob"])
         session.retireLiveRoster()
         XCTAssertEqual(store.enrolled.count, 1, "exactly once")
+        XCTAssertEqual(store.renames.count, 1)
     }
 
     func testGenericNamesAreNotSaved() throws {
@@ -243,5 +256,68 @@ final class MeetingNotesSessionSpeakerNamingTests: XCTestCase {
         XCTAssertEqual(captions.resolveSpeaker(sample(alice, matched: "Alice"), channel: .app).label, "Alice")
         XCTAssertEqual(captions.resolveSpeaker(nil, channel: .mic).label, "Me")
         XCTAssertNil(captions.resolveSpeaker(sample(alice), channel: .app).speakerID)
+    }
+
+    /// `SpeakerNamingSession.matchVerbose` reads `speakers.json` before the
+    /// pipeline transcript is adopted. Names given live must already be there
+    /// at Stop, or the final transcript and summary keep "Speaker N".
+    func testFinishRecordingEnrollsALiveNameThePipelineMatcherSees() throws {
+        let dbPath = try makeTempDirectory(prefix: "LiveNamePipeline").appendingPathComponent("speakers.json")
+        let store = SpeakerDBVoiceProfileStore(dbPath: dbPath)
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Alice")
+
+        session.finishRecording()
+
+        let verbose = SpeakerMatcher(dbPath: dbPath).matchVerbose(embeddings: ["SPEAKER_00": alice])
+        XCTAssertEqual(verbose["SPEAKER_00"]?.assignedName, "Alice")
+    }
+
+    func testAdoptingThePipelineTranscriptRetiresAPostStopCorrection() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Standup", appName: "Zoom")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Aice")
+        session.finishRecording()
+        session.renameLiveSpeaker(id: id, to: "Bob")
+
+        let dir = try makeTempDirectory(prefix: "notes-adopt-retire")
+        let transcriptURL = dir.appendingPathComponent("t.txt")
+        try "Bob: Hi".write(to: transcriptURL, atomically: true, encoding: .utf8)
+        var job = PipelineJob(
+            meetingTitle: "Standup",
+            appName: "Zoom",
+            mixPath: nil,
+            appPath: nil,
+            micPath: nil,
+            micDelay: 0,
+            enqueuedAt: Date(),
+        )
+        job.state = .done
+        job.transcriptPath = transcriptURL
+        let queue = PipelineQueue()
+        queue.jobs = [job]
+        session.sync(from: queue)
+
+        XCTAssertEqual(store.renames.map { "\($0.from)->\($0.to)" }, ["Aice->Bob"])
+        XCTAssertNotNil(session.pipelineTranscript)
+    }
+
+    func testQuitRetiresANameGivenAfterStop() throws {
+        let store = FakeVoiceProfileStore()
+        let session = MeetingNotesSession(voiceProfiles: store)
+        session.begin(title: "Sync", appName: "Gather")
+        let id = try XCTUnwrap(hear("Hi", alice, in: session).speakerID)
+        session.renameLiveSpeaker(id: id, to: "Aice")
+        session.finishRecording()
+
+        session.renameLiveSpeaker(id: id, to: "Bob")
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+
+        XCTAssertEqual(store.renames.map { "\($0.from)->\($0.to)" }, ["Aice->Bob"])
+        XCTAssertEqual(store.enrolled.count, 1)
     }
 }

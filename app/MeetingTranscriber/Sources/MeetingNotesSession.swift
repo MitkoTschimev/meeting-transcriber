@@ -60,6 +60,10 @@ final class MeetingNotesSession {
     /// True once this session's named voices have been written. A later
     /// `retireLiveRoster` (pipeline transcript, next `begin`, quit) is a no-op.
     var didEnrollNamedVoices = false
+    /// Names already written at Stop, keyed by session speaker id. Retire
+    /// enrolls only names added after Stop, and renames a stored profile
+    /// when the user corrected one of these.
+    var enrolledAtStop: [Int: String] = [:]
 
     /// Private scratchpad for the My thoughts tab. Never written into the
     /// transcript, summary, or protocol files. Keystrokes debounce to disk;
@@ -232,6 +236,9 @@ final class MeetingNotesSession {
     func finishRecording(recordOnly: Bool = false) {
         guard phase == .recording else { return }
         persistThoughtsNow()
+        // Names known now must be in speakers.json before the pipeline's
+        // matchVerbose (which runs before the transcript is adopted).
+        enrollLiveNamesKnownNow()
         endedAt = Date()
         hypothesisMic = ""
         hypothesisApp = ""
@@ -451,6 +458,7 @@ final class MeetingNotesSession {
         speakerPalette = SpeakerAccent.Palette()
         speakerRoster = LiveSpeakerRoster()
         didEnrollNamedVoices = false
+        enrolledAtStop = [:]
         refreshSavedVoices()
         didAutoOpenWindow = false
         isLoadingThoughts = false
