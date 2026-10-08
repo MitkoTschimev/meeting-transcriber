@@ -448,56 +448,6 @@ class WatchLoop {
         )
     }
 
-    // MARK: - Meeting End Detection
-
-    @discardableResult
-    func waitForMeetingEnd(_ meeting: DetectedMeeting) async throws -> MeetingEndReason {
-        var graceStart: Date?
-        var lastCallAudioAt: Date?
-        let startTime = nowProvider()
-        let config = WatchLoopEndConfig(
-            maxDuration: maxDuration,
-            endGracePeriod: endGracePeriod,
-            callAudioIdleTimeout: Self.usesCallAudioIdleBackstop(meeting) ? callAudioIdleTimeout : nil,
-        )
-
-        while !Task.isCancelled {
-            if endRequested {
-                logger.info("Recording stopped by the user")
-                return .userStopped
-            }
-            let now = nowProvider()
-            if callAudioIsAudible() { lastCallAudioAt = now }
-            let decision = WatchLoopEndPolicy.step(
-                config: config,
-                now: now,
-                startTime: startTime,
-                graceStart: graceStart,
-                meetingActive: detector.isMeetingActive(meeting),
-                lastCallAudioAt: lastCallAudioAt,
-            )
-            switch decision {
-            case .stopMaxDurationExceeded:
-                logger.info("Max recording duration reached (\(Int(self.maxDuration))s)")
-                return .maxDuration
-
-            case .stopGraceExpired:
-                return .signalEnded
-
-            case .stopCallAudioIdle:
-                logger.info(
-                    "No call audio for \(Int(self.callAudioIdleTimeout))s while \(meeting.pattern.appName, privacy: .public) still reports a call — ending the recording",
-                )
-                return .callAudioIdle
-
-            case let .continuePolling(newGraceStart):
-                graceStart = newGraceStart
-            }
-            try await sleepUntilNextEndPoll()
-        }
-        return .cancelled
-    }
-
     // MARK: - Helpers
 
     private func enqueueRecording(

@@ -14,7 +14,7 @@ extension PowerAssertionDetector {
 
     func recordHits(
         from assertions: [Int32: [[String: Any]]],
-        ignoring ignored: Set<String> = [],
+        ignoring ignored: Set<String>,
         into hitsThisRound: inout Set<String>,
         firstMatch: inout [String: (resolved: ResolvedOpenIdentity, pattern: AssertionPattern)],
     ) {

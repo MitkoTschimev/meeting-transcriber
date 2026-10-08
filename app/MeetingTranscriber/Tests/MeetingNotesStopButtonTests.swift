@@ -23,7 +23,7 @@ final class MeetingNotesStopButtonTests: XCTestCase {
         let session = MeetingNotesSession()
         session.begin(title: "Standup", appName: "GatherV2")
         let stops = ManagedCounter()
-        let view = makeView(session: session, onStop: { _ = stops.increment() })
+        let view = makeView(session: session) { _ = stops.increment() }
 
         let button = try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton)
         try button.button().tap()
@@ -43,7 +43,7 @@ final class MeetingNotesStopButtonTests: XCTestCase {
         let session = MeetingNotesSession()
         session.begin(title: "Standup", appName: "GatherV2")
         session.finishRecording()
-        let view = makeView(session: session, onStop: {})
+        let view = makeView(session: session) {}
 
         XCTAssertThrowsError(try view.inspect().find(viewWithAccessibilityIdentifier: A11yID.meetingNotesStopButton))
     }

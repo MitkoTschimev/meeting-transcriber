@@ -15,14 +15,13 @@ final class DetectorIgnoringTests: XCTestCase {
             confirmationCount: 1,
         )
         detector.windowListProvider = { [] }
-        detector.customAppsProvider = { [
-            WatchedCustomApp(
-                bundleID: "com.gather.Gather",
-                displayName: "GatherV2",
-                matchingBundleIDs: ["com.gather.Gather"],
-                appBundleURL: self.gatherURL,
-            ),
-        ] }
+        let gather = WatchedCustomApp(
+            bundleID: "com.gather.Gather",
+            displayName: "GatherV2",
+            matchingBundleIDs: ["com.gather.Gather"],
+            appBundleURL: gatherURL,
+        )
+        detector.customAppsProvider = { [gather] }
         detector.mainAppPIDProvider = { $0 == "com.gather.Gather" ? 100 : nil }
         detector.processBundleProvider = { pid in
             pid == 555 ? ProcessBundleRef(bundleID: "com.gather.Gather.helper", bundleURL: self.helperURL) : nil
