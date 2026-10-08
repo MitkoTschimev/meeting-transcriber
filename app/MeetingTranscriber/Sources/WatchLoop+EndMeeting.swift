@@ -98,6 +98,7 @@ extension WatchLoop {
     }
 
     var parkedIdentityHasExpired: Bool {
+        guard !parkedUntilSignalDrops else { return false }
         guard let parkedAt else { return parkedMeeting != nil }
         return nowProvider().timeIntervalSince(parkedAt) >= Self.parkedIdentityTTL
     }
@@ -112,50 +113,76 @@ extension WatchLoop {
     func parkIfEndedEarly(_ meeting: DetectedMeeting, reason: MeetingEndReason) {
         switch reason {
         case .userStopped:
-            parkWhileStillSignalling(meeting)
+            // Always-on apps keep the 30 min cap so a later Gather conversation
+            // is recorded. Teams/Zoom/browsers stay parked until the call
+            // signal drops — a TTL would restart a call the user stopped.
+            parkWhileStillSignalling(
+                meeting,
+                untilSignalDrops: !Self.usesCallAudioIdleBackstop(meeting),
+            )
 
         case .callAudioIdle:
             guard Self.usesCallAudioIdleBackstop(meeting) else { return }
-            parkWhileStillSignalling(meeting)
+            parkWhileStillSignalling(meeting, untilSignalDrops: false)
 
         case .signalEnded, .maxDuration, .cancelled:
             return
         }
     }
 
-    private func parkWhileStillSignalling(_ meeting: DetectedMeeting) {
+    private func parkWhileStillSignalling(_ meeting: DetectedMeeting, untilSignalDrops: Bool) {
         guard detector.isMeetingActive(meeting) else { return }
         parkedMeeting = meeting
         parkedAt = nowProvider()
-        logger.info(
-            "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops or \(Int(Self.parkedIdentityTTL / 60)) min pass",
-        )
+        parkedUntilSignalDrops = untilSignalDrops
+        if untilSignalDrops {
+            logger.info(
+                "\(meeting.pattern.appName, privacy: .public) still reports a call after Stop; not re-detecting it until that signal drops",
+            )
+        } else {
+            logger.info(
+                "\(meeting.pattern.appName, privacy: .public) still reports a call after the recording ended; not re-detecting it until that signal drops or \(Int(Self.parkedIdentityTTL / 60)) min pass",
+            )
+        }
     }
 
     /// Drop an idle-backstop recording that never heard anyone. After parking
     /// expires, an always-on app would otherwise enqueue ~5 min of silence
-    /// every 30 min.
+    /// every 30 min. Typed notes keep the recording. Audio is moved to Trash
+    /// rather than unlinked, so it can be recovered.
     func discardSilentIdleRecordingIfNeeded(reason: MeetingEndReason, recording: RecordingResult) -> Bool {
         guard reason == .callAudioIdle, !heardCallAudioDuringRecording else { return false }
-        logger.info("Discarding a recording that never heard any call audio")
-        discardedSilentIdleRecording = true
-        let recordingsDir = AppPaths.recordingsDir.path
-        let files = [recording.mixPath] + [recording.appPath, recording.micPath].compactMap(\.self)
-        for url in files {
-            guard url.path.hasPrefix(recordingsDir) else { continue }
-            try? FileManager.default.removeItem(at: url)
+        if hasTypedNotes() {
+            logger.info("Keeping a silent idle recording because the user typed notes")
+            return false
         }
+        logger.info("Moving a recording that never heard any call audio to Trash")
+        discardedSilentIdleRecording = true
+        let files = [recording.mixPath] + [recording.appPath, recording.micPath].compactMap(\.self)
+        for url in files where RecordingFileGuard.isInside(url, directory: AppPaths.recordingsDir) {
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            } catch {
+                logger.error("Could not move silent recording to Trash: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        notifier.notify(
+            title: "Silent recording discarded",
+            body: "Nothing was heard, so the audio was moved to Trash.",
+            urgency: .standard,
+        )
         return true
     }
 
-    /// Release the parked meeting once its detector signal is gone, or the
-    /// parking TTL has elapsed, so the app's next call is detected normally.
+    /// Release the parked meeting once its detector signal is gone, or (for
+    /// always-on apps) the parking TTL has elapsed.
     func releaseParkedMeetingIfEnded() {
         guard let parked = parkedMeeting else { return }
         let expired = parkedIdentityHasExpired
         guard expired || !detector.isMeetingActive(parked) else { return }
         parkedMeeting = nil
         parkedAt = nil
+        parkedUntilSignalDrops = false
         if expired {
             logger.info(
                 "\(parked.pattern.appName, privacy: .public) parking expired; detecting it again",

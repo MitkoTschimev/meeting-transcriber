@@ -123,16 +123,21 @@ class WatchLoop {
     var endPollSleeper: Task<Void, any Error>?
     /// A meeting that was ended while its detector still reported it active
     /// (user Stop on any app, or idle-audio on an always-on app). Kept out of
-    /// detection until its signal actually drops *or* `parkedIdentityTTL`
-    /// elapses, so the loop does not record it again five seconds later.
+    /// detection until its signal actually drops; always-on apps also re-arm
+    /// after `parkedIdentityTTL`.
     var parkedMeeting: DetectedMeeting?
     /// When `parkedMeeting` was parked. `nil` iff nothing is parked.
     var parkedAt: Date?
+    /// User Stop on Teams/Zoom/browsers stays parked until the call signal
+    /// drops. Always-on apps (and idle-audio parks) may expire after the TTL.
+    var parkedUntilSignalDrops = false
     /// True once either channel carried sustained call audio in this recording.
     /// Idle-ended recordings with this still false are discarded.
     var heardCallAudioDuringRecording = false
     /// Set when `discardSilentIdleRecordingIfNeeded` drops a silent idle take.
     var discardedSilentIdleRecording = false
+    /// Typed Meeting Notes thoughts. A silent idle take with notes is kept.
+    var hasTypedNotes: () -> Bool = { false }
 
     /// Hook called when state changes (for UI updates, notifications, etc.)
     var onStateChange: ((State, State) -> Void)?

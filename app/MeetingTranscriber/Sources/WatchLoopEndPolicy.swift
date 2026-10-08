@@ -101,6 +101,16 @@ enum CallActivityPolicy {
     }
 }
 
+/// Path membership by path components, not `hasPrefix` (which would treat
+/// `recordings-old` as inside `recordings`).
+enum RecordingFileGuard {
+    static func isInside(_ url: URL, directory: URL) -> Bool {
+        let dir = directory.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let file = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        return file.starts(with: dir)
+    }
+}
+
 /// Static configuration for `WatchLoopEndPolicy.step` — duration limits
 /// owned by the WatchLoop instance and re-used across every poll.
 struct WatchLoopEndConfig: Equatable {

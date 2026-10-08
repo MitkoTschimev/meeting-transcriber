@@ -291,6 +291,21 @@ final class WatchLoopEndPolicyTests: XCTestCase {
         XCTAssertFalse(CallActivityPolicy.heardFromApp(CallActivitySample(appLevelDBFS: -120, micLevelDBFS: -30)))
     }
 
+    func testRecordingFileGuardUsesPathComponentsNotPrefix() {
+        let recordings = URL(fileURLWithPath: "/tmp/recordings")
+        XCTAssertTrue(RecordingFileGuard.isInside(
+            URL(fileURLWithPath: "/tmp/recordings/mix.wav"),
+            directory: recordings,
+        ))
+        XCTAssertFalse(
+            RecordingFileGuard.isInside(
+                URL(fileURLWithPath: "/tmp/recordings-old/mix.wav"),
+                directory: recordings,
+            ),
+            "hasPrefix would have treated recordings-old as inside recordings",
+        )
+    }
+
     func testUnknownFallsBackToQuietAfterTimeout() {
         XCTAssertEqual(
             CallActivityPolicy.resolvingUnknown(.unknown, unknownDuration: CallActivityPolicy.unknownQuietFallback - 1),

@@ -100,6 +100,20 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertTrue(loop.discardedSilentIdleRecording, "never heard anyone: do not enqueue five minutes of silence")
     }
 
+    func testSilentIdleRecordingWithTypedNotesIsKept() async throws {
+        let detector = ScriptedMeetingDetector()
+        let recorder = makeMockRecorder()
+        recorder.appLevelDBFS = -120
+        let clock = TestClock()
+        let loop = makeLoop(detector: detector, recorder: recorder, clock: clock)
+        loop.hasTypedNotes = { true }
+
+        try await loop.handleMeeting(gatherMeeting())
+
+        XCTAssertFalse(loop.discardedSilentIdleRecording, "notes typed during the take must not be thrown away")
+        XCTAssertEqual(loop.parkedMeeting?.pattern.appName, "GatherV2")
+    }
+
     func testCallAudioKeepsTheCustomAppRecordingGoing() async throws {
         let detector = ScriptedMeetingDetector()
         let recorder = makeMockRecorder()
@@ -381,6 +395,30 @@ final class WatchLoopEndMeetingTests: XCTestCase {
         XCTAssertNil(loop.parkedMeeting)
         loop.parkIfEndedEarly(chromeMeeting(), reason: .callAudioIdle)
         XCTAssertNil(loop.parkedMeeting)
+    }
+
+    /// User Stop on Zoom/Teams must not re-arm after 30 min while the same
+    /// call is still up — that would record a meeting the user stopped.
+    func testBuiltInAppUserStopDoesNotExpireAfterTTL() async {
+        let detector = ScriptedMeetingDetector()
+        let clock = TestClock()
+        let loop = WatchLoop(
+            detector: detector,
+            nowProvider: { clock.now },
+            sleepProvider: { await clock.sleep(for: $0) },
+        )
+        loop.parkIfEndedEarly(zoomMeeting(), reason: .userStopped)
+        XCTAssertEqual(loop.ignoredIdentities, ["Zoom"])
+        XCTAssertTrue(loop.parkedUntilSignalDrops)
+
+        await clock.sleep(for: WatchLoop.parkedIdentityTTL + 60)
+        loop.releaseParkedMeetingIfEnded()
+        XCTAssertEqual(loop.ignoredIdentities, ["Zoom"], "TTL must not release a user-stopped Zoom call")
+        XCTAssertEqual(loop.parkedMeeting?.pattern.appName, "Zoom")
+
+        detector.active = { _ in false }
+        loop.releaseParkedMeetingIfEnded()
+        XCTAssertTrue(loop.ignoredIdentities.isEmpty)
     }
 
     func testParkingExpiresAfterTTLWhileTheSignalStaysUp() async {
