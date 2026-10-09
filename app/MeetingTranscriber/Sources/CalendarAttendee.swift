@@ -81,6 +81,8 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
         return Self(
             email: email ?? other.email,
             displayName: name,
+            // Only mapping on the user's own calendar / connected account
+            // sets isSelf, so OR here cannot promote a colleague.
             isSelf: isSelf || other.isSelf,
             isOrganizer: isOrganizer || other.isOrganizer,
             isResource: isResource || other.isResource,
@@ -90,12 +92,14 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
     }
 
     func markingSelf(ifEmailIn emails: Set<String>) -> Self {
-        let matches = normalizedEmail.map { emails.contains($0) } ?? false
-        if !matches || isSelf { return self }
+        guard !emails.isEmpty else { return self }
+        guard let mail = normalizedEmail else { return self }
+        let matches = emails.contains(mail)
+        if matches == isSelf { return self }
         return Self(
             email: email,
             displayName: displayName,
-            isSelf: true,
+            isSelf: matches,
             isOrganizer: isOrganizer,
             isResource: isResource,
             isGroup: isGroup,
@@ -107,10 +111,21 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
         raw.contains("@")
     }
 
+    static let maxPickerNameLength = 40
+
+    static func strippedQuotes(_ raw: String) -> String {
+        raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`“”‘’"))
+    }
+
     static func sanitizedDisplayName(_ raw: String?) -> String? {
-        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var trimmed = strippedQuotes(raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        trimmed = strippedQuotes(trimmed)
         if trimmed.isEmpty || looksLikeEmail(trimmed) { return nil }
-        return trimmed
+        if trimmed.count > maxPickerNameLength {
+            trimmed = String(trimmed.prefix(maxPickerNameLength))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     static func persistableName(_ raw: String) -> String? {
@@ -125,9 +140,14 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
     }
 
     /// `john.smith`, `john_smith`, `alice+tag@…` → `John Smith` / `Alice`.
+    /// Skips automated, digits-only, and single-letter local-parts.
     static func humanizedLocalPart(of email: String?) -> String {
-        let local = localPart(of: email ?? "")
+        let local = strippedQuotes(localPart(of: email ?? ""))
         let untagged = local.split(separator: "+").first.map(String.init) ?? local
+        let compact = untagged.lowercased()
+        if compact.isEmpty || Self.automatedLocalParts.contains(compact) { return "" }
+        let letterCount = compact.filter(\.isLetter).count
+        if letterCount < 2 { return "" }
         let words = untagged.split { $0 == "." || $0 == "_" || $0 == "-" }
             .map(String.init)
             .filter { !$0.isEmpty }
@@ -136,8 +156,18 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
                 guard let first = lower.first else { return "" }
                 return String(first).uppercased() + lower.dropFirst()
             }
-        return words.joined(separator: " ")
+        let joined = words.joined(separator: " ")
+        if joined.count <= maxPickerNameLength { return joined }
+        return String(joined.prefix(maxPickerNameLength)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private static let automatedLocalParts: Set<String> = [
+        "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply", "do.not.reply",
+        "mailer-daemon", "mailer_daemon", "postmaster", "bounce",
+        "notifications", "notification", "notify", "daemon",
+        "calendar-notification", "calendar.notification", "calendar_notification",
+        "automail", "auto-reply", "autoreply",
+    ]
 
     static func email(fromMailto url: URL?) -> String? {
         guard let url else { return nil }
@@ -172,11 +202,16 @@ enum CalendarAttendeePicker {
     static func names(
         from attendees: [CalendarAttendee],
         selfEmails: Set<String> = [],
+        includeDeclined: Bool = true,
     ) -> [String] {
         let eligible = attendees
             .map { $0.markingSelf(ifEmailIn: selfEmails) }
             .filter { attendee in
-                !attendee.isResource && !attendee.isGroup && !attendee.isSelf && !attendee.pickerName.isEmpty
+                if attendee.isResource || attendee.isGroup || attendee.isSelf || attendee.pickerName.isEmpty {
+                    return false
+                }
+                if !includeDeclined, attendee.isDeclined { return false }
+                return true
             }
         let ordered = eligible.enumerated().sorted { lhs, rhs in
             if lhs.element.isDeclined != rhs.element.isDeclined {
@@ -201,7 +236,7 @@ enum CalendarAttendeePicker {
     static func merge(teams: [String], attendees: [CalendarAttendee]) -> [String] {
         var seen: Set<String> = []
         var result: [String] = []
-        for name in teams + names(from: attendees) {
+        for name in teams + names(from: attendees, includeDeclined: false) {
             guard let trimmed = CalendarAttendee.persistableName(name) else { continue }
             guard seen.insert(trimmed.lowercased()).inserted else { continue }
             result.append(trimmed)

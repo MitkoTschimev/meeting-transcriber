@@ -67,7 +67,11 @@ final class CalendarController {
     }
 
     func eventOverlapping(at date: Date) -> CalendarEvent? {
-        CalendarTitlePolicy.overlappingEvent(in: overlapEvents, at: date)?
+        CalendarTitlePolicy.overlappingEvent(
+            in: overlapEvents,
+            at: date,
+            userEmails: connectedAccountEmails,
+        )?
             .markingCurrentUser(emails: connectedAccountEmails)
     }
 

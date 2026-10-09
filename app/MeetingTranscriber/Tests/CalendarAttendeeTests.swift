@@ -46,6 +46,31 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertFalse(CalendarAttendeePicker.names(from: [apple, google]).contains { $0.contains("@") })
     }
 
+    func testJunkLocalPartsAreNotOfferedAsNames() {
+        let junk = [
+            CalendarAttendee(email: "noreply@corp.com"),
+            CalendarAttendee(email: "calendar-notification@corp.com"),
+            CalendarAttendee(email: "j123@corp.com"),
+            CalendarAttendee(email: "12345@corp.com"),
+            CalendarAttendee(email: "a@corp.com"),
+            CalendarAttendee(email: "bounce+abc=x.com@corp.com"),
+            CalendarAttendee(email: "\"quoted\"@corp.com", displayName: "\"Jane Doe\""),
+        ]
+        XCTAssertEqual(junk[0].pickerName, "")
+        XCTAssertEqual(junk[1].pickerName, "")
+        XCTAssertEqual(junk[2].pickerName, "")
+        XCTAssertEqual(junk[3].pickerName, "")
+        XCTAssertEqual(junk[4].pickerName, "")
+        XCTAssertEqual(junk[5].pickerName, "")
+        XCTAssertEqual(junk[6].pickerName, "Jane Doe")
+        XCTAssertEqual(CalendarAttendeePicker.names(from: junk), ["Jane Doe"])
+        let long = String(repeating: "n", count: 80)
+        XCTAssertLessThanOrEqual(
+            CalendarAttendee(displayName: long).pickerName.count,
+            CalendarAttendee.maxPickerNameLength,
+        )
+    }
+
     func testPickerNeverEmitsEmailAddresses() {
         let attendees = [
             CalendarAttendee(email: "raw@corp.com", displayName: "raw@corp.com"),
@@ -175,6 +200,15 @@ final class CalendarAttendeeTests: XCTestCase {
             CalendarAttendeePicker.merge(teams: ["xavier.y@corp.com"], attendees: attendees)
                 .contains { $0.contains("@") },
         )
+    }
+
+    func testMergeOmitsDeclinedAttendeesFromPersistedNames() {
+        let attendees = [
+            CalendarAttendee(email: "zoe@corp.com", displayName: "Zoe", status: .declined),
+            CalendarAttendee(email: "amy@corp.com", displayName: "Amy", status: .accepted),
+        ]
+        XCTAssertEqual(CalendarAttendeePicker.merge(teams: ["Bob"], attendees: attendees), ["Bob", "Amy"])
+        XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Amy", "Zoe"])
     }
 
     func testMergeWithoutEventLeavesTeamsNamesUnchanged() {

@@ -17,14 +17,17 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
 
     func fetchEvents(accessToken: String, from: Date, to: Date) async throws -> [CalendarEvent] {
         let calendars = try await calendarList(accessToken: accessToken)
-        let ids = calendars.isEmpty ? ["primary"] : calendars
+        let ids = calendars.compactMap(\.id)
+        let resolved = ids.isEmpty ? ["primary"] : ids
+        let userEmails = Self.connectedUserEmails(from: calendars)
         var collected: [CalendarEvent] = []
-        for id in ids.prefix(maxCalendars) {
+        for id in resolved.prefix(maxCalendars) {
             let page = try await fetchCalendarEvents(
                 calendarID: id,
                 accessToken: accessToken,
                 from: from,
                 to: to,
+                userEmails: userEmails,
             )
             collected.append(contentsOf: page)
         }
@@ -42,21 +45,41 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         return payload.items?.first?.id
     }
 
-    static func parseEvents(_ data: Data, calendarName: String?) -> [CalendarEvent] {
+    static func parseEvents(
+        _ data: Data,
+        calendarName: String?,
+        userEmails: Set<String> = [],
+    ) -> [CalendarEvent] {
         guard let payload = try? JSONDecoder().decode(EventsPayload.self, from: data) else { return [] }
         return (payload.items ?? []).compactMap { item in
-            event(from: item, calendarName: calendarName)
+            event(from: item, calendarName: calendarName, userEmails: userEmails)
         }
     }
 
-    private func calendarList(accessToken: String) async throws -> [String] {
+    /// Primary calendar ids that look like email addresses. Secondary and
+    /// subscribed calendars are not the connected account.
+    private static func connectedUserEmails(from items: [CalendarListItem]) -> Set<String> {
+        var emails: Set<String> = []
+        for item in items where item.primary == true {
+            let id = item.id?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            if id.contains("@") { emails.insert(id) }
+        }
+        return emails
+    }
+
+    static func isOwnCalendar(_ calendarName: String?, userEmails: Set<String>) -> Bool {
+        let name = calendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if name.isEmpty { return false }
+        if name.caseInsensitiveCompare("primary") == .orderedSame { return true }
+        return userEmails.contains(name.lowercased())
+    }
+
+    private func calendarList(accessToken: String) async throws -> [CalendarListItem] {
         let data = try await get(GoogleOAuthConfig.calendarListEndpoint, accessToken: accessToken)
         let payload = try JSONDecoder().decode(CalendarListPayload.self, from: data)
-        let selected = (payload.items ?? []).filter { item in
+        return (payload.items ?? []).filter { item in
             item.selected != false && item.hidden != true
         }
-        let ids = selected.compactMap(\.id)
-        return ids.isEmpty ? ["primary"] : ids
     }
 
     static func eventsURL(calendarID: String, from: Date, to: Date) -> URL? {
@@ -77,10 +100,16 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         return components?.url
     }
 
-    private func fetchCalendarEvents(calendarID: String, accessToken: String, from: Date, to: Date) async throws -> [CalendarEvent] {
+    private func fetchCalendarEvents(
+        calendarID: String,
+        accessToken: String,
+        from: Date,
+        to: Date,
+        userEmails: Set<String>,
+    ) async throws -> [CalendarEvent] {
         guard let url = Self.eventsURL(calendarID: calendarID, from: from, to: to) else { return [] }
         let data = try await get(url, accessToken: accessToken)
-        return Self.parseEvents(data, calendarName: calendarID)
+        return Self.parseEvents(data, calendarName: calendarID, userEmails: userEmails)
     }
 
     private func get(_ url: URL, accessToken: String) async throws -> Data {
@@ -94,7 +123,7 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         return data
     }
 
-    private static func event(from item: EventItem, calendarName: String?) -> CalendarEvent? {
+    private static func event(from item: EventItem, calendarName: String?, userEmails: Set<String>) -> CalendarEvent? {
         let startDate = item.start?.dateTime ?? item.start?.dayStart
         let endDate = item.end?.dateTime ?? item.end?.dayStart
         guard let startDate, let endDate else { return nil }
@@ -113,7 +142,11 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
             isAllDay: item.start?.date != nil,
             joinURL: join,
             calendarName: calendarName,
-            attendees: attendees(from: item, accountEmails: accountEmails(calendarName: calendarName, item: item)),
+            attendees: attendees(
+                from: item,
+                accountEmails: accountEmails(calendarName: calendarName, item: item, userEmails: userEmails),
+                isOwnCalendar: isOwnCalendar(calendarName, userEmails: userEmails),
+            ),
             isCancelled: item.status?.lowercased() == "cancelled",
             ownerEmail: owner,
         )
@@ -124,22 +157,32 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         return trimmed.contains("@") ? trimmed : nil
     }
 
-    private static func accountEmails(calendarName: String?, item: EventItem) -> Set<String> {
-        var emails: Set<String> = []
+    private static func accountEmails(
+        calendarName: String?,
+        item: EventItem,
+        userEmails: Set<String>,
+    ) -> Set<String> {
+        var emails = userEmails
         func add(_ raw: String?) {
             let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
             if trimmed.contains("@") { emails.insert(trimmed) }
         }
+        guard isOwnCalendar(calendarName, userEmails: userEmails) else { return emails }
         add(calendarName)
         if item.organizer?.isSelf == true { add(item.organizer?.email) }
         if item.creator?.isSelf == true { add(item.creator?.email) }
         return emails
     }
 
-    private static func attendees(from item: EventItem, accountEmails: Set<String>) -> [CalendarAttendee] {
+    private static func attendees(
+        from item: EventItem,
+        accountEmails: Set<String>,
+        isOwnCalendar: Bool,
+    ) -> [CalendarAttendee] {
         func mapped(_ person: GooglePerson, isOrganizer: Bool) -> CalendarAttendee? {
             let email = person.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let isSelf = person.isSelf == true || (email.map { accountEmails.contains($0) } ?? false)
+            let isSelf = (person.isSelf == true && isOwnCalendar)
+                || (email.map { accountEmails.contains($0) } ?? false)
             return CalendarAttendeeMapping.google(
                 email: person.email,
                 displayName: person.displayName,

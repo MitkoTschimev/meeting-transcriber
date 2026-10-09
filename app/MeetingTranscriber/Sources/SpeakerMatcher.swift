@@ -511,8 +511,9 @@ class SpeakerMatcher {
         }
 
         // Find unused participants: not already assigned as a value in mapping
-        let usedNames = Set(mapping.values)
-        let unusedParticipants = participants.filter { !usedNames.contains($0) }
+        // (case-insensitive so a calendar "alice" does not also match saved "Alice").
+        let usedNames = Set(mapping.values.map { $0.lowercased() })
+        let unusedParticipants = participants.filter { !usedNames.contains($0.lowercased()) }
 
         // Only assign when counts match exactly
         guard unmatchedLabels.count == unusedParticipants.count,

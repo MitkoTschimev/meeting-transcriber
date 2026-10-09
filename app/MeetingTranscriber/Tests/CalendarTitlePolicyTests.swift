@@ -104,6 +104,25 @@ final class CalendarTitlePolicyTests: XCTestCase {
             ],
         )
         XCTAssertNil(CalendarTitlePolicy.overlappingEvent(in: [declined], at: event.start.addingTimeInterval(60)))
+        let colleagueSelf = CalendarEvent(
+            id: "d2",
+            title: "Design review",
+            start: event.start,
+            end: event.end,
+            source: .google,
+            attendees: [
+                CalendarAttendee(email: "bob@corp.com", displayName: "Bob", isSelf: true, status: .declined),
+                CalendarAttendee(email: "alice@corp.com", displayName: "Alice", isSelf: false, status: .accepted),
+            ],
+        )
+        XCTAssertEqual(
+            CalendarTitlePolicy.overlappingEvent(
+                in: [colleagueSelf],
+                at: event.start.addingTimeInterval(60),
+                userEmails: ["alice@corp.com"],
+            )?.id,
+            "d2",
+        )
     }
 
     func testIsGeneric() {

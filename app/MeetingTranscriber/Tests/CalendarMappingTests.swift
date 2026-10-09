@@ -87,7 +87,11 @@ final class CalendarMappingTests: XCTestCase {
           ]
         }]}
         """#.utf8)
-        let events = GoogleCalendarAPI.parseEvents(json, calendarName: "me@corp.com")
+        let events = GoogleCalendarAPI.parseEvents(
+            json,
+            calendarName: "me@corp.com",
+            userEmails: ["me@corp.com"],
+        )
         let attendees = try XCTUnwrap(events.first?.attendees)
         XCTAssertEqual(events.first?.ownerEmail, "me@corp.com")
         XCTAssertEqual(
@@ -95,6 +99,32 @@ final class CalendarMappingTests: XCTestCase {
             true,
         )
         XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Jane"])
+    }
+
+    func testGoogleColleagueCalendarDoesNotTreatItsOwnerAsTheUser() throws {
+        let json = Data(#"""
+        {"items":[{
+          "id":"g1","summary":"Design review",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"},
+          "attendees":[
+            {"email":"bob@corp.com","displayName":"Bob","self":true,"responseStatus":"declined"},
+            {"email":"alice@corp.com","displayName":"Alice","responseStatus":"accepted"}
+          ]
+        }]}
+        """#.utf8)
+        let events = GoogleCalendarAPI.parseEvents(
+            json,
+            calendarName: "bob@corp.com",
+            userEmails: ["alice@corp.com"],
+        )
+        let attendees = try XCTUnwrap(events.first?.attendees)
+        XCTAssertEqual(attendees.first { $0.normalizedEmail == "bob@corp.com" }?.isSelf, false)
+        XCTAssertEqual(attendees.first { $0.normalizedEmail == "alice@corp.com" }?.isSelf, true)
+        XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Bob"])
+        XCTAssertFalse(GoogleCalendarAPI.isOwnCalendar("bob@corp.com", userEmails: ["alice@corp.com"]))
+        XCTAssertTrue(GoogleCalendarAPI.isOwnCalendar("alice@corp.com", userEmails: ["alice@corp.com"]))
+        XCTAssertTrue(GoogleCalendarAPI.isOwnCalendar("primary", userEmails: []))
     }
 
     func testGoogleCancelledEventIsFlagged() {

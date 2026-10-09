@@ -3,6 +3,11 @@ import XCTest
 
 @MainActor
 final class WatchLoopCalendarTests: XCTestCase {
+    private func makeIsolatedQueue() throws -> PipelineQueue {
+        let tmp = try makeTempDirectory(prefix: "watchLoopCalQ")
+        return PipelineQueue(logDir: tmp) { _, _ in }
+    }
+
     func testManualRecordingUsesCalendarTitleWhenDetectedTitleIsGeneric() async throws {
         let start = Date()
         let event = CalendarEvent(
@@ -25,7 +30,7 @@ final class WatchLoopCalendarTests: XCTestCase {
     }
 
     func testManualRecordingCapturesAttendeesEvenWhenTitleIsKept() async throws {
-        let queue = PipelineQueue()
+        let queue = try makeIsolatedQueue()
         let attendees = [
             CalendarAttendee(email: "me@corp.com", displayName: "Mitko", isSelf: true, status: .accepted),
             CalendarAttendee(email: "jane@corp.com", displayName: "Jane Doe", status: .accepted),
@@ -55,7 +60,7 @@ final class WatchLoopCalendarTests: XCTestCase {
     }
 
     func testAutoStartPutsCalendarAttendeesOnTheJob() async throws {
-        let queue = PipelineQueue()
+        let queue = try makeIsolatedQueue()
         let attendees = [
             CalendarAttendee(email: "me@corp.com", displayName: "Mitko", isSelf: true, status: .accepted),
             CalendarAttendee(email: "jane@corp.com", displayName: "Jane Doe", status: .accepted),
@@ -75,6 +80,9 @@ final class WatchLoopCalendarTests: XCTestCase {
             detector: ImmediatelyInactiveDetector(),
             recorderFactory: { recorder },
             pipelineQueue: queue,
+            pollInterval: 0.01,
+            endGracePeriod: 0.01,
+            maxDuration: 10,
             calendarLookup: { _ in event }, // swiftlint:disable:this trailing_closure
         )
         loop.permissionChecker = { .allHealthy }
@@ -90,7 +98,7 @@ final class WatchLoopCalendarTests: XCTestCase {
     }
 
     func testAutoStartRecordOnlySidecarPersistsCalendarParticipants() async throws {
-        let queue = PipelineQueue()
+        let queue = try makeIsolatedQueue()
         let tmp = try makeTempDirectory(prefix: "calAttendeeRO")
         let mixURL = tmp.appendingPathComponent("20260503_120000_mix.wav")
         try Data().write(to: mixURL)
@@ -113,6 +121,9 @@ final class WatchLoopCalendarTests: XCTestCase {
             detector: ImmediatelyInactiveDetector(),
             recorderFactory: { recorder },
             pipelineQueue: queue,
+            pollInterval: 0.01,
+            endGracePeriod: 0.01,
+            maxDuration: 10,
             recordOnly: { true },
             recordOnlyDestination: { .unscoped(destDir) },
             calendarLookup: { _ in event },

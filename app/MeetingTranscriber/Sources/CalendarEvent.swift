@@ -57,8 +57,18 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         self.ownerEmail = ownerEmail
     }
 
-    var currentUserDeclined: Bool {
-        attendees.contains { $0.isSelf && $0.isDeclined }
+    /// True when the *app user* declined. Google `self` on a subscribed
+    /// colleague calendar is not enough: pass the connected account emails
+    /// (or rely on Apple's `isCurrentUser`, which sets `isSelf` with no mail).
+    func declinedByCurrentUser(emails: Set<String>) -> Bool {
+        attendees.contains { attendee in
+            guard attendee.isDeclined else { return false }
+            if let mail = attendee.normalizedEmail, emails.contains(mail) { return true }
+            guard attendee.isSelf else { return false }
+            if emails.isEmpty { return true }
+            if let mail = attendee.normalizedEmail { return emails.contains(mail) }
+            return true
+        }
     }
 
     func withAttendees(_ attendees: [CalendarAttendee]) -> Self {
@@ -78,13 +88,8 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
     }
 
     func markingCurrentUser(emails: Set<String>) -> Self {
-        var accounts = emails
-        if let owner = ownerEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           owner.contains("@") {
-            accounts.insert(owner)
-        }
-        guard !accounts.isEmpty else { return self }
-        return withAttendees(attendees.map { $0.markingSelf(ifEmailIn: accounts) })
+        guard !emails.isEmpty else { return self }
+        return withAttendees(attendees.map { $0.markingSelf(ifEmailIn: emails) })
     }
 
     var sourceLabel: String {
