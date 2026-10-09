@@ -42,8 +42,8 @@ final class WatchLoopCalendarTests: XCTestCase {
         recorder.mixPath = URL(fileURLWithPath: "/tmp/test_mix.wav")
         let loop = WatchLoop(
             recorderFactory: { recorder },
-            calendarLookup: { _ in event },
             pipelineQueue: queue,
+            calendarLookup: { _ in event }, // swiftlint:disable:this trailing_closure
         )
         loop.permissionChecker = { .allHealthy }
         try await loop.startManualRecording(pid: 42, appName: "Microsoft Teams", title: "Jane Doe")
