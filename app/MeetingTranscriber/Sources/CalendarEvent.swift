@@ -27,8 +27,8 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
     /// True when the provider marked the event cancelled. Overlap matching
     /// skips these so a recording does not inherit a cancelled invite.
     let isCancelled: Bool
-    /// Calendar / source account email when the provider exposes one
-    /// (Google calendar id). Used in memory to recognise the current user.
+    /// Calendar id when it looks like an email (Google). Not treated as the
+    /// connected user — subscribed calendars use the owner's address here.
     let ownerEmail: String?
 
     init(

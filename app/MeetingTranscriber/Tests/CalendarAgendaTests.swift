@@ -144,7 +144,7 @@ final class CalendarAgendaTests: XCTestCase {
             end: start.addingTimeInterval(1800),
             source: .google,
             attendees: [
-                CalendarAttendee(email: "bob@corp.com", displayName: "Bob", status: .accepted),
+                CalendarAttendee(email: "bob@corp.com", displayName: "Bob", isSelf: true, status: .accepted),
                 CalendarAttendee(email: "alice@corp.com", displayName: "Alice", status: .accepted),
             ],
             ownerEmail: "bob@corp.com",

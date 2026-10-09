@@ -81,9 +81,9 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
         return Self(
             email: email ?? other.email,
             displayName: name,
-            // Only mapping on the user's own calendar / connected account
-            // sets isSelf, so OR here cannot promote a colleague.
-            isSelf: isSelf || other.isSelf,
+            // Google `self` is calendar-local. Do not absorb it from the
+            // other copy — `markingSelf` restamps from known user emails.
+            isSelf: isSelf,
             isOrganizer: isOrganizer || other.isOrganizer,
             isResource: isResource || other.isResource,
             isGroup: isGroup || other.isGroup,

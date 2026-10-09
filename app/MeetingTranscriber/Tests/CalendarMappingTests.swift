@@ -127,6 +127,98 @@ final class CalendarMappingTests: XCTestCase {
         XCTAssertTrue(GoogleCalendarAPI.isOwnCalendar("primary", userEmails: []))
     }
 
+    func testUserCopyMergedWithColleagueDeclinedCopyKeepsEvent() throws {
+        let userEmails: Set = ["alice@corp.com"]
+        let userCopy = try XCTUnwrap(Self.parseCopy(
+            calendar: "alice@corp.com",
+            aliceStatus: "accepted",
+            bobStatus: "declined",
+            bobSelf: false,
+            userEmails: userEmails,
+        ))
+        let bobCopy = try XCTUnwrap(Self.parseCopy(
+            calendar: "bob@corp.com",
+            aliceStatus: "accepted",
+            bobStatus: "declined",
+            bobSelf: true,
+            userEmails: userEmails,
+        ))
+        XCTAssertEqual(
+            CalendarTitlePolicy.overlappingEvent(
+                in: [userCopy],
+                at: userCopy.start.addingTimeInterval(60),
+                userEmails: userEmails,
+            )?.title,
+            "Design review",
+        )
+        let merged = CalendarAgenda.merge([[userCopy], [bobCopy]])
+            .map { $0.markingCurrentUser(emails: userEmails) }
+        let event = try XCTUnwrap(CalendarTitlePolicy.overlappingEvent(
+            in: merged,
+            at: userCopy.start.addingTimeInterval(60),
+            userEmails: userEmails,
+        ))
+        XCTAssertEqual(event.title, "Design review")
+        XCTAssertEqual(CalendarAttendeePicker.names(from: event.attendees), ["Bob"])
+        XCTAssertEqual(event.attendees.first { $0.normalizedEmail == "bob@corp.com" }?.isSelf, false)
+        XCTAssertFalse(event.declinedByCurrentUser(emails: userEmails))
+    }
+
+    func testUserCopyMergedWithColleagueAcceptedCopyKeepsColleagueInPicker() throws {
+        let userEmails: Set = ["alice@corp.com"]
+        let userCopy = try XCTUnwrap(Self.parseCopy(
+            calendar: "alice@corp.com",
+            aliceStatus: "accepted",
+            bobStatus: "accepted",
+            bobSelf: false,
+            userEmails: userEmails,
+        ))
+        let bobCopy = try XCTUnwrap(Self.parseCopy(
+            calendar: "bob@corp.com",
+            aliceStatus: "accepted",
+            bobStatus: "accepted",
+            bobSelf: true,
+            userEmails: userEmails,
+        ))
+        let merged = CalendarAgenda.merge([[userCopy], [bobCopy]])
+            .map { $0.markingCurrentUser(emails: userEmails) }
+        let event = try XCTUnwrap(CalendarTitlePolicy.overlappingEvent(
+            in: merged,
+            at: userCopy.start.addingTimeInterval(60),
+            userEmails: userEmails,
+        ))
+        XCTAssertEqual(event.title, "Design review")
+        XCTAssertEqual(CalendarAttendeePicker.names(from: event.attendees), ["Bob"])
+        XCTAssertEqual(event.attendees.first { $0.normalizedEmail == "bob@corp.com" }?.isSelf, false)
+    }
+
+    private static func parseCopy(
+        calendar: String,
+        aliceStatus: String,
+        bobStatus: String,
+        bobSelf: Bool,
+        userEmails: Set<String>,
+    ) -> CalendarEvent? {
+        let aliceSelfJSON = calendar == "alice@corp.com" ? "true" : "false"
+        let bobSelfJSON = bobSelf ? "true" : "false"
+        let json = Data("""
+        {"items":[{
+          "id":"g1","summary":"Design review",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"},
+          "attendees":[
+            {"email":"alice@corp.com","displayName":"Alice","self":\(aliceSelfJSON),"responseStatus":"\(aliceStatus)"},
+            {"email":"bob@corp.com","displayName":"Bob","self":\(bobSelfJSON),"responseStatus":"\(bobStatus)"}
+          ]
+        }]}
+        """.utf8)
+        return GoogleCalendarAPI.parseEvents(
+            json,
+            calendarName: calendar,
+            userEmails: userEmails,
+        ).first
+    }
+
     func testGoogleCancelledEventIsFlagged() {
         let json = Data(#"""
         {"items":[{

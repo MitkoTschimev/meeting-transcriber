@@ -244,9 +244,10 @@ final class CalendarAttendeeTests: XCTestCase {
         )
         let merged = apple.merging(google)
         XCTAssertEqual(merged.displayName, "Alice Chen")
-        XCTAssertTrue(merged.isSelf)
+        XCTAssertFalse(merged.isSelf)
         XCTAssertEqual(merged.status, .declined)
         XCTAssertTrue(apple.isSamePerson(as: google))
+        XCTAssertTrue(merged.markingSelf(ifEmailIn: ["alice@corp.com"]).isSelf)
     }
 
     func testAppleStatusAndResourceMapping() {

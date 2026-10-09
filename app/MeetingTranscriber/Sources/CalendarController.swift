@@ -75,8 +75,9 @@ final class CalendarController {
             .markingCurrentUser(emails: connectedAccountEmails)
     }
 
-    /// Google token email plus any in-memory calendar owner emails. Used to
-    /// mark the current user when EventKit/`self` did not.
+    /// Connected Google account email only. Subscribed calendar ids are not
+    /// the user — EventKit `isCurrentUser` and Google `self` on the primary
+    /// calendar cover the rest.
     private var connectedAccountEmails: Set<String> {
         var emails: Set<String> = []
         if let googleEmail {
