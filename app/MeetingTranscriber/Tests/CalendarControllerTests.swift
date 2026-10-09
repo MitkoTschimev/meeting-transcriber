@@ -291,4 +291,84 @@ final class CalendarControllerTests: XCTestCase {
         XCTAssertNil(calendar.eventOverlapping(at: now))
         XCTAssertTrue(calendar.upcoming.isEmpty)
     }
+
+    func testConnectedGoogleEmailMarksMatchingAttendeeAsSelf() async throws {
+        let settings = try CalendarControllerFixtures.makeSettings(in: self)
+        let store = CalendarControllerFixtures.makeStore(in: self)
+        try store.save(CalendarControllerFixtures.sampleToken(email: "user@example.com"))
+        settings.googleCalendarEnabled = true
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let live = CalendarEvent(
+            id: "google:live",
+            title: "Standup",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .google,
+            attendees: [
+                CalendarAttendee(email: "user@example.com", displayName: "Me Person"),
+                CalendarAttendee(email: "alice@corp.com", displayName: "Alice"),
+            ],
+        )
+        let google = StubGoogleCalendarAPI(events: [live], email: "user@example.com")
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(),
+            googleAPI: google,
+            oauth: StubGoogleOAuth(),
+        ) { now }
+        await calendar.refresh()
+        let overlapping = try XCTUnwrap(calendar.eventOverlapping(at: now))
+        XCTAssertEqual(
+            overlapping.attendees.first { $0.normalizedEmail == "user@example.com" }?.isSelf,
+            true,
+        )
+        XCTAssertEqual(CalendarAttendeePicker.names(from: overlapping.attendees), ["Alice"])
+    }
+
+    func testRemarkingKeepsAppleSelfWhenGoogleEmailDiffers() async throws {
+        let settings = try CalendarControllerFixtures.makeSettings(in: self)
+        let store = CalendarControllerFixtures.makeStore(in: self)
+        try store.save(CalendarControllerFixtures.sampleToken(email: "mitko@gmail.com"))
+        settings.googleCalendarEnabled = true
+        settings.appleCalendarEnabled = true
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let accepted = CalendarEvent(
+            id: "apple:keep",
+            title: "Design review",
+            start: now,
+            end: now.addingTimeInterval(1800),
+            source: .apple,
+            attendees: [
+                CalendarAttendee(email: "mitko@work.com", displayName: "Mitko T", isSelf: true, status: .accepted),
+                CalendarAttendee(email: "alice@corp.com", displayName: "Alice", status: .accepted),
+            ],
+        )
+        let declined = CalendarEvent(
+            id: "apple:skip",
+            title: "Skip this",
+            start: now.addingTimeInterval(3600),
+            end: now.addingTimeInterval(5400),
+            source: .apple,
+            attendees: [
+                CalendarAttendee(email: "mitko@work.com", displayName: "Mitko T", isSelf: true, status: .declined),
+            ],
+        )
+        let calendar = CalendarController(
+            settings: settings,
+            tokenStore: store,
+            apple: StubAppleCalendarAccess(status: .granted, events: [accepted, declined]),
+            googleAPI: StubGoogleCalendarAPI(events: [], email: "mitko@gmail.com"),
+            oauth: StubGoogleOAuth(),
+        ) { now }
+        await calendar.refresh()
+        let overlapping = try XCTUnwrap(calendar.eventOverlapping(at: now.addingTimeInterval(60)))
+        XCTAssertEqual(overlapping.title, "Design review")
+        XCTAssertEqual(
+            overlapping.attendees.first { $0.normalizedEmail == "mitko@work.com" }?.isSelf,
+            true,
+        )
+        XCTAssertEqual(CalendarAttendeePicker.names(from: overlapping.attendees), ["Alice"])
+        XCTAssertNil(calendar.eventOverlapping(at: now.addingTimeInterval(3660)))
+    }
 }

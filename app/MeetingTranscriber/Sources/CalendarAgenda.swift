@@ -54,10 +54,29 @@ enum CalendarAgenda {
     }
 
     private static func prefer(_ incoming: CalendarEvent, over existing: CalendarEvent) -> CalendarEvent {
-        switch (incoming.joinURL != nil, existing.joinURL != nil) {
+        let winner: CalendarEvent = switch (incoming.joinURL != nil, existing.joinURL != nil) {
         case (true, false): incoming
         case (false, true): existing
         default: existing
         }
+        let other = incoming == winner ? existing : incoming
+        return winner.withAttendees(mergedAttendees(winner.attendees, other.attendees))
+    }
+
+    private static func mergedAttendees(
+        _ primary: [CalendarAttendee],
+        _ secondary: [CalendarAttendee],
+    ) -> [CalendarAttendee] {
+        guard !secondary.isEmpty else { return primary }
+        guard !primary.isEmpty else { return secondary }
+        var merged: [CalendarAttendee] = []
+        for attendee in primary + secondary {
+            if let index = merged.firstIndex(where: { $0.isSamePerson(as: attendee) }) {
+                merged[index] = merged[index].merging(attendee)
+            } else {
+                merged.append(attendee)
+            }
+        }
+        return merged
     }
 }

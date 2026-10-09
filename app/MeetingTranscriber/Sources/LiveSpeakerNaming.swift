@@ -6,6 +6,9 @@ import SwiftUI
 struct LiveSpeakerNaming {
     let speakers: [LiveSessionSpeaker]
     let savedVoiceNames: [String]
+    /// Display names from the overlapping calendar event, already filtered
+    /// (no self, resources skipped, declined last). Empty when no event.
+    let calendarAttendeeNames: [String]
     /// The voice of the latest line while recording, highlighted as speaking.
     let speakingNowID: Int?
     let micLabel: String
@@ -14,8 +17,44 @@ struct LiveSpeakerNaming {
     /// Picker cap: enough for a team, short enough to scan in a menu.
     static let maxSuggestions = 12
 
+    init(
+        speakers: [LiveSessionSpeaker],
+        savedVoiceNames: [String],
+        speakingNowID: Int?,
+        micLabel: String,
+        calendarAttendeeNames: [String] = [],
+        onAssign: @escaping @MainActor (Int, String) -> Void,
+    ) {
+        self.speakers = speakers
+        self.savedVoiceNames = savedVoiceNames
+        self.calendarAttendeeNames = calendarAttendeeNames
+        self.speakingNowID = speakingNowID
+        self.micLabel = micLabel
+        self.onAssign = onAssign
+    }
+
     func speaker(id: Int) -> LiveSessionSpeaker? {
         speakers.first { $0.id == id }
+    }
+
+    /// "From calendar" names plus the existing Who-is-this list, with
+    /// calendar names dropped from the latter so a saved voice that matches
+    /// an attendee is not listed twice.
+    func suggestionMenu(for speakerID: Int) -> (calendar: [String], others: [String]) {
+        let current = speaker(id: speakerID)?.label.lowercased() ?? ""
+        var seen: Set<String> = current.isEmpty ? [] : [current]
+        var calendar: [String] = []
+        for name in calendarAttendeeNames {
+            let displayed = CalendarAttendeePicker.preferredSpelling(name, among: savedVoiceNames)
+            guard let persistable = CalendarAttendee.persistableName(displayed) else { continue }
+            guard seen.insert(persistable.lowercased()).inserted else { continue }
+            calendar.append(persistable)
+            if calendar.count == Self.maxSuggestions { break }
+        }
+        let others = suggestions(for: speakerID).filter { name in
+            !calendar.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+        }
+        return (calendar, others)
     }
 
     /// Names offered for a voice, most useful first: the mic label for a mic
@@ -89,13 +128,23 @@ struct LiveSpeakerMenu: View {
     }
 
     @ViewBuilder private var menuItems: some View {
-        let names = naming.suggestions(for: speakerID)
-        if !names.isEmpty {
+        let menu = naming.suggestionMenu(for: speakerID)
+        if !menu.calendar.isEmpty {
+            Section("From calendar") {
+                ForEach(menu.calendar, id: \.self) { name in
+                    Button(name) { naming.onAssign(speakerID, name) }
+                        .accessibilityIdentifier(A11yID.meetingNotesCalendarAttendee(name))
+                }
+            }
+        }
+        if !menu.others.isEmpty {
             Section("Who is this?") {
-                ForEach(names, id: \.self) { name in
+                ForEach(menu.others, id: \.self) { name in
                     Button(name) { naming.onAssign(speakerID, name) }
                 }
             }
+        }
+        if !menu.calendar.isEmpty || !menu.others.isEmpty {
             Divider()
         }
         Button("New name…") { requestNewName(speakerID) }

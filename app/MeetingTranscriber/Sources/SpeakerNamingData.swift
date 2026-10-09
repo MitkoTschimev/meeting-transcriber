@@ -16,7 +16,7 @@ extension PipelineQueue {
         let embeddings: [String: [Float]]
         let audioPath: URL? // 16kHz mix for playback
         let segments: [Segment] // for extracting speaker snippets
-        let participants: [String] // Teams participant names as suggestions
+        let participants: [String] // Calendar attendees and Teams roster names as suggestions
         let isDualSource: Bool
         /// Per-instance identity for SwiftUI `.onChange` change-detection.
         /// Late re-diarization can produce a `mapping`/`speakingTimes` set

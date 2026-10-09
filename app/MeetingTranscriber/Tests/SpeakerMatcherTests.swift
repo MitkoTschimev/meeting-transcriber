@@ -624,6 +624,24 @@ final class SpeakerMatcherTests: XCTestCase {
         XCTAssertEqual(result["SPEAKER_2"], "Speaker C")
     }
 
+    func testPreMatchParticipants_usedNamesAreCaseInsensitive() {
+        let mapping: [String: String] = [
+            "SPEAKER_0": "Alice",
+            "SPEAKER_1": "SPEAKER_1",
+        ]
+        let speakingTimes: [String: TimeInterval] = [
+            "SPEAKER_0": 50.0,
+            "SPEAKER_1": 80.0,
+        ]
+        let result = SpeakerMatcher.preMatchParticipants(
+            mapping: mapping,
+            speakingTimes: speakingTimes,
+            participants: ["alice", "Bob"],
+        )
+        XCTAssertEqual(result["SPEAKER_0"], "Alice")
+        XCTAssertEqual(result["SPEAKER_1"], "Bob")
+    }
+
     func testPreMatchParticipants_noUnmatched() {
         // All already named → no change
         let mapping: [String: String] = [

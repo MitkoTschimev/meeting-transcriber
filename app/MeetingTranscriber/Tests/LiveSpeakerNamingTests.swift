@@ -13,12 +13,17 @@ final class LiveSpeakerNamingTests: XCTestCase {
         return roster
     }
 
-    private func naming(saved: [String] = [], onAssign: @escaping @MainActor (Int, String) -> Void = { _, _ in }) -> LiveSpeakerNaming {
+    private func naming(
+        saved: [String] = [],
+        calendar: [String] = [],
+        onAssign: @escaping @MainActor (Int, String) -> Void = { _, _ in },
+    ) -> LiveSpeakerNaming {
         LiveSpeakerNaming(
             speakers: roster().speakers,
             savedVoiceNames: saved,
             speakingNowID: nil,
             micLabel: "Me",
+            calendarAttendeeNames: calendar,
             onAssign: onAssign,
         )
     }
@@ -39,6 +44,54 @@ final class LiveSpeakerNamingTests: XCTestCase {
         XCTAssertFalse(naming.suggestions(for: alice).contains("Alice"))
         let me = try id(of: "Me", in: naming)
         XCTAssertEqual(naming.suggestions(for: me), ["Bob"])
+    }
+
+    func testMenuWithoutCalendarMatchesExistingSuggestions() throws {
+        let naming = naming(saved: ["Bob", "alice", "Carol"])
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        let menu = naming.suggestionMenu(for: placeholder)
+        XCTAssertEqual(menu.calendar, [])
+        XCTAssertEqual(menu.others, naming.suggestions(for: placeholder))
+    }
+
+    func testMenuPutsCalendarNamesInTheirOwnSectionAndDedupesSavedVoices() throws {
+        let naming = naming(saved: ["Alice", "Bob"], calendar: ["Carol", "alice", "Me"])
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        let menu = naming.suggestionMenu(for: placeholder)
+        XCTAssertEqual(menu.calendar, ["Carol", "Alice", "Me"])
+        XCTAssertEqual(menu.others, ["Bob"])
+        XCTAssertFalse(menu.others.contains("Alice"))
+    }
+
+    func testMenuUsesSavedVoiceSpellingWhenCaseDiffers() throws {
+        let naming = naming(saved: ["Alice Chen"], calendar: ["alice chen", "Bob"])
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        XCTAssertEqual(naming.suggestionMenu(for: placeholder).calendar, ["Alice Chen", "Bob"])
+        XCTAssertFalse(naming.suggestionMenu(for: placeholder).others.contains("Alice Chen"))
+    }
+
+    func testMenuCapsCalendarNamesAtMaxSuggestions() throws {
+        let calendar = (1 ... 20).map { "Person \($0)" }
+        let naming = naming(saved: [], calendar: calendar)
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        XCTAssertEqual(
+            naming.suggestionMenu(for: placeholder).calendar.count,
+            LiveSpeakerNaming.maxSuggestions,
+        )
+    }
+
+    func testMenuOmitsTheCurrentNameFromCalendar() throws {
+        let naming = naming(saved: [], calendar: ["Alice", "Bob"])
+        let alice = try id(of: "Alice", in: naming)
+        XCTAssertEqual(naming.suggestionMenu(for: alice).calendar, ["Bob"])
+        XCTAssertFalse(naming.suggestionMenu(for: alice).others.contains("Alice"))
+    }
+
+    func testMenuWithoutEventLeavesWhoIsThisUnchanged() throws {
+        let naming = naming(saved: ["Bob"])
+        let me = try id(of: "Me", in: naming)
+        XCTAssertEqual(naming.suggestionMenu(for: me).others, ["Bob"])
+        XCTAssertEqual(naming.suggestionMenu(for: me).calendar, [])
     }
 
     func testSuggestionsAreCapped() throws {

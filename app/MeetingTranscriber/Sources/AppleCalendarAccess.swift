@@ -44,6 +44,8 @@ enum AppleCalendarMapper {
         notes: String?,
         location: String?,
         calendarName: String?,
+        attendees: [CalendarAttendee] = [],
+        isCancelled: Bool = false,
     ) -> CalendarEvent? {
         guard let start, let end else { return nil }
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -56,7 +58,77 @@ enum AppleCalendarMapper {
             isAllDay: isAllDay,
             joinURL: MeetingLinkExtractor.url(from: [location, notes], explicit: url),
             calendarName: calendarName,
+            attendees: attendees,
+            isCancelled: isCancelled,
         )
+    }
+
+    static func attendees(from event: EKEvent) -> [CalendarAttendee] {
+        let organizerURL = event.organizer?.url
+        let people = event.attendees ?? []
+        var mapped = people.compactMap { participant in
+            attendee(from: participant, isOrganizer: participant.url == organizerURL && organizerURL != nil)
+        }
+        if let organizer = event.organizer {
+            let organizerEmail = CalendarAttendee.email(fromMailto: organizer.url)
+            let alreadyListed = mapped.contains { existing in
+                if let organizerEmail, existing.email?.lowercased() == organizerEmail.lowercased() {
+                    return true
+                }
+                return existing.isOrganizer
+            }
+            if !alreadyListed, let extra = attendee(from: organizer, isOrganizer: true) {
+                mapped.insert(extra, at: 0)
+            }
+        }
+        return mapped
+    }
+
+    static func attendee(from participant: EKParticipant, isOrganizer: Bool) -> CalendarAttendee? {
+        CalendarAttendeeMapping.apple(
+            name: participant.name,
+            url: participant.url,
+            isCurrentUser: participant.isCurrentUser,
+            isOrganizer: isOrganizer,
+            isResource: isResource(participant.participantType),
+            status: status(participant.participantStatus),
+            isGroup: isGroup(participant.participantType),
+        )
+    }
+
+    static func isResource(_ type: EKParticipantType) -> Bool {
+        switch type {
+        case .room, .resource: true
+        case .unknown, .person, .group: false
+        @unknown default: false
+        }
+    }
+
+    static func isGroup(_ type: EKParticipantType) -> Bool {
+        switch type {
+        case .group: true
+        case .unknown, .person, .room, .resource: false
+        @unknown default: false
+        }
+    }
+
+    static func isCancelled(_ status: EKEventStatus) -> Bool {
+        switch status {
+        case .canceled: true
+        case .none, .confirmed, .tentative: false
+        @unknown default: false
+        }
+    }
+
+    static func status(_ status: EKParticipantStatus) -> CalendarAttendeeStatus {
+        switch status {
+        case .accepted: .accepted
+        case .declined: .declined
+        case .tentative: .tentative
+        case .pending: .needsAction
+        case .unknown, .delegated, .completed, .inProcess: .unknown
+        @unknown default: .unknown
+        }
     }
 }
 
@@ -94,6 +166,8 @@ final class EventKitAppleCalendarAccess: AppleCalendarAccessing {
                 notes: ek.notes,
                 location: ek.location,
                 calendarName: ek.calendar?.title,
+                attendees: AppleCalendarMapper.attendees(from: ek),
+                isCancelled: AppleCalendarMapper.isCancelled(ek.status),
             )
         }
     }

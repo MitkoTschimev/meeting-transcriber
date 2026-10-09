@@ -154,6 +154,12 @@ enum A11yID {
 
     static let meetingNotesSpeakerChips = "meetingNotesSpeakerChips"
     static let meetingNotesNewSpeakerName = "meetingNotesNewSpeakerName"
+
+    static func meetingNotesCalendarAttendee(_ name: String) -> String {
+        "meetingNotesCalendarAttendee-\(name)"
+    }
+
+    static let speakerParticipantsHeading = "speaker-participants-heading"
     static let autoOpenMeetingNotesToggle = "autoOpenMeetingNotesToggle"
     static let meetingNotesSummaryError = "meetingNotesSummaryError"
     static let meetingNotesRetryButton = "meetingNotesRetryButton"

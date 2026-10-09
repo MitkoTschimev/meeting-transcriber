@@ -20,6 +20,16 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
     let joinURL: URL?
     let source: CalendarProviderKind
     let calendarName: String?
+    /// People on the invite. Empty when the provider did not return any, or
+    /// when calendars are off. Stored on the recording so live and later
+    /// speaker naming can offer the same list.
+    let attendees: [CalendarAttendee]
+    /// True when the provider marked the event cancelled. Overlap matching
+    /// skips these so a recording does not inherit a cancelled invite.
+    let isCancelled: Bool
+    /// Calendar id when it looks like an email (Google). Not treated as the
+    /// connected user — subscribed calendars use the owner's address here.
+    let ownerEmail: String?
 
     init(
         id: String,
@@ -30,6 +40,9 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         isAllDay: Bool = false,
         joinURL: URL? = nil,
         calendarName: String? = nil,
+        attendees: [CalendarAttendee] = [],
+        isCancelled: Bool = false,
+        ownerEmail: String? = nil,
     ) {
         self.id = id
         self.title = title
@@ -39,6 +52,42 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         self.joinURL = joinURL
         self.source = source
         self.calendarName = calendarName
+        self.attendees = attendees
+        self.isCancelled = isCancelled
+        self.ownerEmail = ownerEmail
+    }
+
+    /// True when the *app user* declined. Colleague copies must already have
+    /// `isSelf` cleared at read time; this trusts `isSelf` (Apple
+    /// `isCurrentUser`, own-calendar Google `self`) or a known user address.
+    func declinedByCurrentUser(emails: Set<String>) -> Bool {
+        attendees.contains { attendee in
+            guard attendee.isDeclined else { return false }
+            if attendee.isSelf { return true }
+            guard let mail = attendee.normalizedEmail else { return false }
+            return emails.contains(mail)
+        }
+    }
+
+    func withAttendees(_ attendees: [CalendarAttendee]) -> Self {
+        Self(
+            id: id,
+            title: title,
+            start: start,
+            end: end,
+            source: source,
+            isAllDay: isAllDay,
+            joinURL: joinURL,
+            calendarName: calendarName,
+            attendees: attendees,
+            isCancelled: isCancelled,
+            ownerEmail: ownerEmail,
+        )
+    }
+
+    func markingCurrentUser(emails: Set<String>) -> Self {
+        guard !emails.isEmpty else { return self }
+        return withAttendees(attendees.map { $0.markingSelf(ifEmailIn: emails) })
     }
 
     var sourceLabel: String {

@@ -521,8 +521,32 @@ final class SpeakerNamingViewTests: XCTestCase { // swiftlint:disable:this type_
         )
         let sut = SpeakerNamingView(data: data) { _ in }
         let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(text: "Participants"))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.speakerParticipantsHeading))
         XCTAssertNoThrow(try body.find(button: "Dave"))
         XCTAssertNoThrow(try body.find(button: "Eve"))
+    }
+
+    func testParticipantHeadingUsesSavedVoiceSpelling() throws {
+        let data = PipelineQueue.SpeakerNamingData(
+            jobID: UUID(),
+            meetingTitle: "Standup",
+            mapping: ["SPEAKER_00": "SPEAKER_00"],
+            speakingTimes: ["SPEAKER_00": 60],
+            embeddings: ["SPEAKER_00": [0.1, 0.2, 0.3]],
+            audioPath: nil,
+            segments: [],
+            participants: ["alice"],
+            isDualSource: false,
+        )
+        let sut = SpeakerNamingView(data: data, knownSpeakerNames: ["Alice"]) { _ in }
+        let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(button: "Alice"))
+        let aliceButtons = body.findAll(ViewType.Button.self).filter { btn in
+            (try? btn.labelView().text().string()) == "Alice"
+        }
+        XCTAssertEqual(aliceButtons.count, 1)
+        XCTAssertThrowsError(try body.find(button: "alice"))
     }
 
     // MARK: - Known speakers also in participants are de-duplicated

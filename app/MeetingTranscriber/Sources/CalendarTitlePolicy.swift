@@ -58,10 +58,12 @@ enum CalendarTitlePolicy {
         at date: Date,
         graceBefore: TimeInterval = 120,
         graceAfter: TimeInterval = 120,
+        userEmails: Set<String> = [],
     ) -> CalendarEvent? {
         events
             .filter { event in
-                guard !event.isAllDay else { return false }
+                guard !event.isAllDay, !event.isCancelled,
+                      !event.declinedByCurrentUser(emails: userEmails) else { return false }
                 let windowStart = event.start.addingTimeInterval(-graceBefore)
                 let windowEnd = event.end.addingTimeInterval(graceAfter)
                 return date >= windowStart && date <= windowEnd
