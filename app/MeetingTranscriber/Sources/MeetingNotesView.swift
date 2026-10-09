@@ -340,7 +340,7 @@ struct MeetingNotesView: View {
                     Task { await session.retryNotes(using: queue) }
                 }
             } else if let notes = session.notesMarkdown, !notes.isEmpty {
-                SpeakerMentionText(markdown: notes, mentions: mentions)
+                MeetingNotesSummaryDocument(markdown: notes, mentions: mentions)
             } else if session.phase == .failed {
                 Text(session.errorMessage ?? "Notes could not be generated. The transcript was saved.")
                     .foregroundStyle(.red)

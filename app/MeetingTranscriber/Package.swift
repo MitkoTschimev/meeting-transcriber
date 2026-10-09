@@ -10,6 +10,7 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.19.1"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.0.0"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.13.4"),
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", exact: "2.4.1"),
         .package(path: "../../tools/audiotap"),
     ],
     targets: [
@@ -38,7 +39,7 @@ let package = Package(
         .binaryTarget(
             name: "CLocalVQE",
             url: "https://github.com/pasrom/localvqe-xcframework/releases/download/1.0.3/LocalVQE.xcframework.zip",
-            checksum: "15a7503e7d764012ee955ba04cef78a0b24f8d51856fc85b96d9be49d38624ba"
+            checksum: "15a7503e7d764012ee955ba04cef78a0b24f8d51856fc85b96d9be49d38624ba",
         ),
         .executableTarget(
             name: "MeetingTranscriber",
@@ -46,6 +47,7 @@ let package = Package(
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "AudioTapLib", package: "audiotap"),
+                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "CLocalVQE",
             ],
             path: "Sources",
@@ -80,7 +82,7 @@ let package = Package(
                 .linkedFramework("Accelerate"),
                 .linkedFramework("EventKit"),
                 .linkedFramework("Network"),
-            ]
+            ],
         ),
         .testTarget(
             name: "MeetingTranscriberTests",
@@ -101,8 +103,8 @@ let package = Package(
                     "-Xfrontend", "-warn-long-expression-type-checking=300",
                 ]),
                 .enableUpcomingFeature("ExistentialAny"),
-            ]
+            ],
         ),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
 )

@@ -61,15 +61,9 @@ enum ProtocolNotesFailure: Equatable, Sendable {
     static let fullTranscriptHeading = "## Full Transcript"
 
     /// Protocol body with the optional Full Transcript appendix removed.
+    /// Uses the same last-whole-line heading match as `NotesMarkdownSplit`.
     static func notesBody(from markdown: String) -> String {
-        let heading = fullTranscriptHeading
-        guard let range = markdown.range(of: heading) else { return markdown }
-        var body = String(markdown[..<range.lowerBound])
-        body = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        if body.hasSuffix("---") {
-            body = String(body.dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return body
+        NotesMarkdownSplit.parse(markdown).notes
     }
 
     /// `nil` when `markdown` looks like real notes. Existing files whose whole
