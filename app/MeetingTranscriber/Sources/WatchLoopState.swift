@@ -1,10 +1,10 @@
 import Foundation
 
-/// Value-type snapshot of `WatchLoop`'s five observable fields. The class
+/// Value-type snapshot of `WatchLoop`'s observable fields. The class
 /// keeps the fields as `@Observable` stored properties (so SwiftUI bindings
 /// continue working); `WatchLoopState` is the form tests and other readers
 /// (e.g. the RPC state snapshot) use for equality checks against a single
-/// value rather than five field-wise comparisons.
+/// value rather than field-wise comparisons.
 struct WatchLoopState: Equatable {
     var phase: WatchLoop.State
     var currentMeeting: DetectedMeeting?
@@ -14,6 +14,8 @@ struct WatchLoopState: Equatable {
     /// Title used for the notes window, menu, and pipeline job after calendar
     /// enrichment. Nil when nothing is recording.
     var recordingTitle: String?
+    /// Attendees of the overlapping calendar event for the in-flight recording.
+    var recordingAttendees: [CalendarAttendee] = []
 
     /// Initial state at `WatchLoop` construction. Matches the field
     /// defaults declared on the class — see `WatchLoop.init`.
@@ -24,7 +26,13 @@ struct WatchLoopState: Equatable {
         detail: "",
         manualRecordingInfo: nil,
         recordingTitle: nil,
+        recordingAttendees: [],
     )
+
+    mutating func clearRecordingIdentity() {
+        recordingTitle = nil
+        recordingAttendees = []
+    }
 }
 
 /// The read-only views of the loop's own state. They touch nothing private, so
@@ -54,7 +62,7 @@ extension WatchLoop {
         return currentMeeting.map { .forApp(pid: $0.windowPID, noMic: noMic) }
     }
 
-    /// Value-type view of the five observable fields. Useful for tests,
+    /// Value-type view of the observable fields. Useful for tests,
     /// `AppState+RPC` snapshots, and as the input/output shape for the
     /// upcoming pure-function reducer slice.
     var snapshot: WatchLoopState {
@@ -65,6 +73,7 @@ extension WatchLoop {
             detail: detail,
             manualRecordingInfo: manualRecordingInfo,
             recordingTitle: recordingTitle,
+            recordingAttendees: recordingAttendees,
         )
     }
 }

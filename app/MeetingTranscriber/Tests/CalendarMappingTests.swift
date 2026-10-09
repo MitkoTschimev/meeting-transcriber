@@ -46,6 +46,52 @@ final class CalendarMappingTests: XCTestCase {
         XCTAssertEqual(events.first?.source, .google)
         XCTAssertEqual(events.first?.joinURL?.host, "meet.google.com")
         XCTAssertEqual(events.first?.isAllDay, false)
+        XCTAssertEqual(events.first?.attendees, [])
+    }
+
+    func testGoogleEventsJSONMapsAttendeesIncludingOrganizer() throws {
+        let json = Data(#"""
+        {"items":[{
+          "id":"g1","summary":"Standup",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"},
+          "organizer":{"email":"me@corp.com","displayName":"Mitko","self":true},
+          "attendees":[
+            {"email":"me@corp.com","displayName":"Mitko","self":true,"organizer":true,"responseStatus":"accepted"},
+            {"email":"alice@corp.com","displayName":"Alice Chen","responseStatus":"accepted"},
+            {"email":"bob@corp.com","responseStatus":"tentative"},
+            {"email":"skip@corp.com","displayName":"Skip","responseStatus":"declined"},
+            {"displayName":"Boardroom","resource":true,"responseStatus":"accepted"}
+          ]
+        }]}
+        """#.utf8)
+        let events = GoogleCalendarAPI.parseEvents(json, calendarName: "primary")
+        let attendees = try XCTUnwrap(events.first?.attendees)
+        XCTAssertEqual(attendees.count, 5)
+        XCTAssertEqual(
+            CalendarAttendeePicker.names(from: attendees),
+            ["Alice Chen", "bob", "Skip"],
+        )
+    }
+
+    func testAppleMapperKeepsAttendeesOnTheEvent() throws {
+        let start = Date(timeIntervalSince1970: 50)
+        let attendees = [
+            CalendarAttendee(email: "alice@corp.com", displayName: "Alice"),
+        ]
+        let mapped = try XCTUnwrap(AppleCalendarMapper.event(
+            id: "ek-1",
+            title: "Design Review",
+            start: start,
+            end: start.addingTimeInterval(1800),
+            isAllDay: false,
+            url: nil,
+            notes: nil,
+            location: nil,
+            calendarName: "Work",
+            attendees: attendees,
+        ))
+        XCTAssertEqual(mapped.attendees, attendees)
     }
 
     func testGoogleAllDayEvent() throws {

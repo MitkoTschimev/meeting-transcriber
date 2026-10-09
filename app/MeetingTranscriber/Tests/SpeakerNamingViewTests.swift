@@ -521,6 +521,7 @@ final class SpeakerNamingViewTests: XCTestCase { // swiftlint:disable:this type_
         )
         let sut = SpeakerNamingView(data: data) { _ in }
         let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(text: "From calendar"))
         XCTAssertNoThrow(try body.find(button: "Dave"))
         XCTAssertNoThrow(try body.find(button: "Eve"))
     }

@@ -296,6 +296,7 @@ struct MeetingNotesView: View {
             savedVoiceNames: notes.savedVoiceNames,
             speakingNowID: notes.phase == .recording ? notes.lastLiveSpeakerID : nil,
             micLabel: micLabel,
+            calendarAttendeeNames: notes.calendarPickerNames,
         ) { id, name in
             notes.renameLiveSpeaker(id: id, to: name)
             // Same cache invalidation KnownVoices does after a DB edit.

@@ -48,6 +48,14 @@ final class MeetingNotesSession {
     var speakerRoster = LiveSpeakerRoster()
     /// Saved voice names offered when naming a speaker, most recent first.
     var savedVoiceNames: [String] = []
+    /// Attendees of the overlapping calendar event, kept for live naming and
+    /// copied onto the pipeline job at Stop so the post-meeting dialog can
+    /// offer the same list after processing.
+    var calendarAttendees: [CalendarAttendee] = []
+    var calendarPickerNames: [String] {
+        CalendarAttendeePicker.names(from: calendarAttendees)
+    }
+
     /// Saved voice profiles (`speakers.json` in production). nil in tests that
     /// do not exercise naming, and then naming is session-only.
     @ObservationIgnored var voiceProfiles: (any VoiceProfileStoring)? {
@@ -196,16 +204,23 @@ final class MeetingNotesSession {
     /// Start (or retitle) the live session. A second call while still recording
     /// only fills in the real meeting title — live captions can arrive before
     /// the watch loop publishes `.recording`.
-    func begin(title: String, appName: String, startTime: Date = Date()) {
+    func begin(
+        title: String,
+        appName: String,
+        startTime: Date = Date(),
+        calendarAttendees: [CalendarAttendee] = [],
+    ) {
         if phase == .recording, endedAt == nil {
             if !title.isEmpty { self.title = title }
             if !appName.isEmpty { self.appName = appName }
+            if !calendarAttendees.isEmpty { self.calendarAttendees = calendarAttendees }
             return
         }
         persistThoughtsNow()
         resetContents()
         self.title = title
         self.appName = appName
+        self.calendarAttendees = calendarAttendees
         startedAt = startTime
         endedAt = nil
         phase = .recording
@@ -458,6 +473,7 @@ final class MeetingNotesSession {
         thoughtsURL = nil
         speakerPalette = SpeakerAccent.Palette()
         speakerRoster = LiveSpeakerRoster()
+        calendarAttendees = []
         didEnrollNamedVoices = false
         enrolledAtStop = [:]
         refreshSavedVoices()

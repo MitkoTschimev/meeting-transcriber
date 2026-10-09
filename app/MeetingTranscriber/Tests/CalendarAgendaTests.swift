@@ -26,6 +26,29 @@ final class CalendarAgendaTests: XCTestCase {
         XCTAssertEqual(merged.first?.joinURL?.host, "meet.google.com")
     }
 
+    func testMergeKeepsAttendeesFromTheCopyWithoutTheJoinLink() {
+        let start = now.addingTimeInterval(3600)
+        let apple = CalendarEvent(
+            id: "a",
+            title: "Standup",
+            start: start,
+            end: start.addingTimeInterval(1800),
+            source: .apple,
+            attendees: [CalendarAttendee(email: "alice@corp.com", displayName: "Alice")],
+        )
+        let google = CalendarEvent(
+            id: "g",
+            title: "Standup",
+            start: start,
+            end: start.addingTimeInterval(1800),
+            source: .google,
+            joinURL: URL(string: "https://meet.google.com/abc"),
+        )
+        let merged = CalendarAgenda.merge([[apple], [google]])
+        XCTAssertEqual(merged.first?.joinURL?.host, "meet.google.com")
+        XCTAssertEqual(merged.first?.attendees.map(\.pickerName), ["Alice"])
+    }
+
     func testUpcomingDropsPastAndCaps() {
         let past = CalendarEvent(
             id: "past",

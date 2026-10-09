@@ -84,6 +84,26 @@ final class SpeakerNamingStoreTests: XCTestCase {
         XCTAssertEqual(loaded.jobID, id)
     }
 
+    func test_saveThenLoad_roundTripsCalendarParticipants() throws {
+        let store = SpeakerNamingStore(outputDir: tmpDir)
+        let id = UUID()
+        let slug = try SpeakerNamingStore.slug(title: "Standup", jobID: id, startTime: localDate(2026, 3, 4, 9, 15))
+        let data = PipelineQueue.SpeakerNamingData(
+            jobID: id,
+            meetingTitle: "Standup",
+            mapping: ["SPEAKER_0": "Alice"],
+            speakingTimes: ["SPEAKER_0": 60],
+            embeddings: ["SPEAKER_0": [0.1, 0.2]],
+            audioPath: nil,
+            segments: [.init(start: 0, end: 5, speaker: "SPEAKER_0")],
+            participants: ["Alice Chen", "bob"],
+            isDualSource: false,
+        )
+        try store.save(data, slug: slug)
+        let loaded = try XCTUnwrap(store.load(slug: slug))
+        XCTAssertEqual(loaded.participants, ["Alice Chen", "bob"])
+    }
+
     /// FluidAudio embeddings can contain NaN/Inf for short/silent segments.
     /// The store must use the string round-trip float strategy so the sidecar
     /// still persists — a plain JSONEncoder rejects non-conforming floats.

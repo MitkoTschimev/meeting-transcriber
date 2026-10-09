@@ -112,7 +112,43 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
             isAllDay: item.start?.date != nil,
             joinURL: join,
             calendarName: calendarName,
+            attendees: attendees(from: item),
         )
+    }
+
+    private static func attendees(from item: EventItem) -> [CalendarAttendee] {
+        var mapped = (item.attendees ?? []).compactMap { person in
+            CalendarAttendeeMapping.google(
+                email: person.email,
+                displayName: person.displayName,
+                isSelf: person.isSelf == true,
+                isOrganizer: person.organizer == true,
+                isResource: person.resource == true,
+                responseStatus: person.responseStatus,
+            )
+        }
+        if let organizer = item.organizer {
+            let organizerEmail = organizer.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let alreadyListed = mapped.contains { existing in
+                if let organizerEmail, !organizerEmail.isEmpty,
+                   existing.email?.lowercased() == organizerEmail {
+                    return true
+                }
+                return existing.isOrganizer
+            }
+            if !alreadyListed,
+               let extra = CalendarAttendeeMapping.google(
+                   email: organizer.email,
+                   displayName: organizer.displayName,
+                   isSelf: organizer.isSelf == true,
+                   isOrganizer: true,
+                   isResource: organizer.resource == true,
+                   responseStatus: organizer.responseStatus ?? "accepted",
+               ) {
+                mapped.insert(extra, at: 0)
+            }
+        }
+        return mapped
     }
 
     private static func isoString(_ date: Date) -> String {
@@ -148,9 +184,25 @@ private struct EventItem: Decodable {
     let start: EventTime?
     let end: EventTime?
     let conferenceData: ConferenceData?
+    let organizer: GooglePerson?
+    let attendees: [GooglePerson]?
 
     var conferenceURI: String? {
         conferenceData?.entryPoints?.first { $0.uri != nil }?.uri
+    }
+}
+
+private struct GooglePerson: Decodable {
+    let email: String?
+    let displayName: String?
+    let isSelf: Bool?
+    let organizer: Bool?
+    let resource: Bool?
+    let responseStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case email, displayName, organizer, resource, responseStatus
+        case isSelf = "self"
     }
 }
 

@@ -23,6 +23,9 @@ class WatchLoop {
     /// Calendar-enriched title for the in-flight recording, or the cleaned
     /// window title when no overlapping event exists.
     private(set) var recordingTitle: String?
+    /// Attendees of the overlapping calendar event, captured at recording
+    /// start so live naming and the pipeline job share the same list.
+    private(set) var recordingAttendees: [CalendarAttendee] = []
 
     // Manual recording
     private(set) var manualRecordingInfo: ManualRecordingInfo?
@@ -227,7 +230,7 @@ class WatchLoop {
         update { next in
             next.phase = .idle
             next.currentMeeting = nil
-            next.recordingTitle = nil
+            next.clearRecordingIdentity()
             next.detail = ""
         }
         logger.info("Watch mode stopped")
@@ -289,13 +292,14 @@ class WatchLoop {
         )
 
         let pid = source.appPID
-        let resolved = enrichedTitle(title, appName: appName)
+        let context = calendarContext(detectedTitle: title, appName: appName)
         activeRecorder = recorder
         update { next in
             next.phase = .recording
-            next.manualRecordingInfo = ManualRecordingInfo(pid: pid, appName: appName, title: resolved)
-            next.recordingTitle = resolved
-            next.detail = "Recording: \(resolved)"
+            next.manualRecordingInfo = ManualRecordingInfo(pid: pid, appName: appName, title: context.title)
+            next.recordingTitle = context.title
+            next.recordingAttendees = context.attendees
+            next.detail = "Recording: \(context.title)"
         }
 
         manualRecordingTask = Task { [weak self] in
@@ -328,7 +332,7 @@ class WatchLoop {
         update { next in
             next.phase = .idle
             next.manualRecordingInfo = nil
-            next.recordingTitle = nil
+            next.clearRecordingIdentity()
             next.detail = ""
             if let failureMessage { next.lastError = failureMessage }
         }
@@ -393,7 +397,7 @@ class WatchLoop {
         if !Task.isCancelled {
             update { next in
                 next.phase = .watching
-                next.recordingTitle = nil
+                next.clearRecordingIdentity()
                 next.detail = "Polling for meetings..."
             }
         }
@@ -403,13 +407,18 @@ class WatchLoop {
     // MARK: - Meeting Handling
 
     func handleMeeting(_ meeting: DetectedMeeting) async throws {
-        let title = enrichedTitle(Self.cleanTitle(meeting.windowTitle), appName: meeting.pattern.appName)
+        let context = calendarContext(
+            detectedTitle: Self.cleanTitle(meeting.windowTitle),
+            appName: meeting.pattern.appName,
+        )
+        let title = context.title
 
         // --- Recording ---
         update { next in
             next.phase = .recording
             next.currentMeeting = meeting
             next.recordingTitle = title
+            next.recordingAttendees = context.attendees
             next.detail = "Recording: \(title)"
         }
 
@@ -478,6 +487,10 @@ class WatchLoop {
         participants: [String] = [],
     ) {
         beforeEnqueueRecording?()
+        let mergedParticipants = CalendarAttendeePicker.merge(
+            teams: participants,
+            attendees: recordingAttendees,
+        )
         if recordOnly() {
             do {
                 try writeRecordOnlySidecar(
@@ -485,7 +498,7 @@ class WatchLoop {
                     appName: appName,
                     recording: recording,
                     trigger: trigger,
-                    participants: participants,
+                    participants: mergedParticipants,
                 )
             } catch {
                 // Error left redacted: a sidecar/WAV write error embeds the
@@ -514,7 +527,7 @@ class WatchLoop {
             appPath: recording.appPath,
             micPath: recording.micPath,
             micDelay: recording.micDelay,
-            participants: participants,
+            participants: mergedParticipants,
             meetingStartTime: recording.recordingStartDate,
         )
         pipelineQueue?.enqueue(job)
@@ -546,6 +559,9 @@ class WatchLoop {
             manualRecordingInfo = next.manualRecordingInfo
         }
         if recordingTitle != next.recordingTitle { recordingTitle = next.recordingTitle }
+        if recordingAttendees != next.recordingAttendees {
+            recordingAttendees = next.recordingAttendees
+        }
         if oldPhase != next.phase {
             onStateChange?(oldPhase, next.phase)
         }
@@ -559,37 +575,5 @@ class WatchLoop {
         case .recording: .recording
         case .error: .error
         }
-    }
-}
-
-/// Pair of URLs used by `WatchLoop` when persisting record-only output: the
-/// `scope` URL is what `startAccessingSecurityScopedResource()` is called on
-/// (the bookmark-resolved parent the user actually picked), and `writeDir` is
-/// the sub-path under that scope where the WAV + sidecar files land.
-///
-/// The split exists because Apple's security-scoped-bookmark API only grants
-/// access on the URL that resolved from the bookmark — calling start-access
-/// on a *child* path silently fails inside the App Store sandbox while
-/// appearing to work in the unsandboxed Homebrew build. The factory methods
-/// below make the two cases (real bookmark vs. transient app dir) explicit
-/// at every call site.
-struct RecordOnlyDestination: Equatable {
-    let scope: URL
-    let writeDir: URL
-
-    /// Production path: `parent` is the user-picked Output Folder (potentially
-    /// resolved from a security-scoped bookmark) and the WAVs land under
-    /// `parent/recordings/` so a Syncthing or rsync pair has a stable subtree.
-    static func production(parent: URL) -> Self {
-        Self(
-            scope: parent,
-            writeDir: parent.appendingPathComponent("recordings", isDirectory: true),
-        )
-    }
-
-    /// Test/default path: no security scope to manage — `scope == writeDir`,
-    /// so start-access is a harmless no-op and the writer hits `url` directly.
-    static func unscoped(_ url: URL) -> Self {
-        Self(scope: url, writeDir: url)
     }
 }

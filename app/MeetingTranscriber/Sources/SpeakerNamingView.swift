@@ -442,7 +442,12 @@ struct SpeakerNamingView: View { // swiftlint:disable:this type_body_length
     private func participantChips(for label: String, query: String) -> some View {
         let participants = Self.filterByQuery(names: data.participants, query: query)
         if !participants.isEmpty {
-            chipRow(names: participants, idPrefix: A11yID.participantNamePrefix) { rows.names[label] = $0 }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("From calendar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                chipRow(names: participants, idPrefix: A11yID.participantNamePrefix) { rows.names[label] = $0 }
+            }
         }
     }
 

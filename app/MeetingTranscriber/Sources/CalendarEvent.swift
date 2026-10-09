@@ -20,6 +20,10 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
     let joinURL: URL?
     let source: CalendarProviderKind
     let calendarName: String?
+    /// People on the invite. Empty when the provider did not return any, or
+    /// when calendars are off. Stored on the recording so live and later
+    /// speaker naming can offer the same list.
+    let attendees: [CalendarAttendee]
 
     init(
         id: String,
@@ -30,6 +34,7 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         isAllDay: Bool = false,
         joinURL: URL? = nil,
         calendarName: String? = nil,
+        attendees: [CalendarAttendee] = [],
     ) {
         self.id = id
         self.title = title
@@ -39,6 +44,21 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         self.joinURL = joinURL
         self.source = source
         self.calendarName = calendarName
+        self.attendees = attendees
+    }
+
+    func withAttendees(_ attendees: [CalendarAttendee]) -> Self {
+        Self(
+            id: id,
+            title: title,
+            start: start,
+            end: end,
+            source: source,
+            isAllDay: isAllDay,
+            joinURL: joinURL,
+            calendarName: calendarName,
+            attendees: attendees,
+        )
     }
 
     var sourceLabel: String {
