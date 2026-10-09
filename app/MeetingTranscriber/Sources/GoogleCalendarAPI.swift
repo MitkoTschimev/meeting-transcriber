@@ -16,10 +16,9 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
     }
 
     func fetchEvents(accessToken: String, from: Date, to: Date) async throws -> [CalendarEvent] {
-        let calendars = try await calendarList(accessToken: accessToken)
-        let ids = calendars.compactMap(\.id)
-        let resolved = ids.isEmpty ? ["primary"] : ids
-        let userEmails = Self.connectedUserEmails(from: calendars)
+        let listed = try await calendarList(accessToken: accessToken)
+        let selection = Self.calendarSelection(from: listed)
+        let resolved = selection.selectedIDs.isEmpty ? ["primary"] : selection.selectedIDs
         var collected: [CalendarEvent] = []
         for id in resolved.prefix(maxCalendars) {
             let page = try await fetchCalendarEvents(
@@ -27,7 +26,7 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
                 accessToken: accessToken,
                 from: from,
                 to: to,
-                userEmails: userEmails,
+                userEmails: selection.userEmails,
             )
             collected.append(contentsOf: page)
         }
@@ -56,6 +55,15 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
         }
     }
 
+    /// Primary calendar ids that look like email addresses, including a
+    /// primary the user has unticked. Selected ids are the calendars to fetch.
+    static func parseCalendarList(_ data: Data) -> (selectedIDs: [String], userEmails: Set<String>) {
+        guard let payload = try? JSONDecoder().decode(CalendarListPayload.self, from: data) else {
+            return ([], [])
+        }
+        return calendarSelection(from: payload.items ?? [])
+    }
+
     /// Primary calendar ids that look like email addresses. Secondary and
     /// subscribed calendars are not the connected account.
     private static func connectedUserEmails(from items: [CalendarListItem]) -> Set<String> {
@@ -65,6 +73,16 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
             if id.contains("@") { emails.insert(id) }
         }
         return emails
+    }
+
+    private static func calendarSelection(from items: [CalendarListItem]) -> (
+        selectedIDs: [String],
+        userEmails: Set<String>,
+    ) {
+        let selectedIDs = items
+            .filter { $0.selected != false && $0.hidden != true }
+            .compactMap(\.id)
+        return (selectedIDs, connectedUserEmails(from: items))
     }
 
     static func isOwnCalendar(_ calendarName: String?, userEmails: Set<String>) -> Bool {
@@ -77,9 +95,7 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
     private func calendarList(accessToken: String) async throws -> [CalendarListItem] {
         let data = try await get(GoogleOAuthConfig.calendarListEndpoint, accessToken: accessToken)
         let payload = try JSONDecoder().decode(CalendarListPayload.self, from: data)
-        return (payload.items ?? []).filter { item in
-            item.selected != false && item.hidden != true
-        }
+        return payload.items ?? []
     }
 
     static func eventsURL(calendarID: String, from: Date, to: Date) -> URL? {

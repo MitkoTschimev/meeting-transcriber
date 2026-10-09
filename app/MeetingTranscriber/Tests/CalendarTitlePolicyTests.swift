@@ -111,8 +111,8 @@ final class CalendarTitlePolicyTests: XCTestCase {
             end: event.end,
             source: .google,
             attendees: [
-                CalendarAttendee(email: "bob@corp.com", displayName: "Bob", isSelf: true, status: .declined),
-                CalendarAttendee(email: "alice@corp.com", displayName: "Alice", isSelf: false, status: .accepted),
+                CalendarAttendee(email: "bob@corp.com", displayName: "Bob", status: .declined),
+                CalendarAttendee(email: "alice@corp.com", displayName: "Alice", isSelf: true, status: .accepted),
             ],
         )
         XCTAssertEqual(

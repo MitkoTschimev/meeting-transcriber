@@ -57,17 +57,15 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         self.ownerEmail = ownerEmail
     }
 
-    /// True when the *app user* declined. Google `self` on a subscribed
-    /// colleague calendar is not enough: pass the connected account emails
-    /// (or rely on Apple's `isCurrentUser`, which sets `isSelf` with no mail).
+    /// True when the *app user* declined. Colleague copies must already have
+    /// `isSelf` cleared at read time; this trusts `isSelf` (Apple
+    /// `isCurrentUser`, own-calendar Google `self`) or a known user address.
     func declinedByCurrentUser(emails: Set<String>) -> Bool {
         attendees.contains { attendee in
             guard attendee.isDeclined else { return false }
-            if let mail = attendee.normalizedEmail, emails.contains(mail) { return true }
-            guard attendee.isSelf else { return false }
-            if emails.isEmpty { return true }
-            if let mail = attendee.normalizedEmail { return emails.contains(mail) }
-            return true
+            if attendee.isSelf { return true }
+            guard let mail = attendee.normalizedEmail else { return false }
+            return emails.contains(mail)
         }
     }
 

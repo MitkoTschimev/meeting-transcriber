@@ -127,6 +127,48 @@ final class CalendarMappingTests: XCTestCase {
         XCTAssertTrue(GoogleCalendarAPI.isOwnCalendar("primary", userEmails: []))
     }
 
+    func testOwnCalendarAliasKeepsSelfAfterRemarking() throws {
+        let json = Data(#"""
+        {"items":[{
+          "id":"g1","summary":"Standup",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"},
+          "attendees":[
+            {"email":"mitko.t@gmail.com","displayName":"Mitko T","self":true,"responseStatus":"accepted"},
+            {"email":"alice@corp.com","displayName":"Alice","responseStatus":"accepted"}
+          ]
+        }]}
+        """#.utf8)
+        let connected: Set = ["mitko@gmail.com"]
+        let events = GoogleCalendarAPI.parseEvents(
+            json,
+            calendarName: "mitko@gmail.com",
+            userEmails: connected,
+        )
+        let attendees = try XCTUnwrap(events.first?.attendees)
+        XCTAssertEqual(attendees.first { $0.normalizedEmail == "mitko.t@gmail.com" }?.isSelf, true)
+        let marked = events.first?.markingCurrentUser(emails: connected)
+        XCTAssertEqual(
+            marked?.attendees.first { $0.normalizedEmail == "mitko.t@gmail.com" }?.isSelf,
+            true,
+        )
+        XCTAssertEqual(CalendarAttendeePicker.names(from: marked?.attendees ?? [], selfEmails: connected), ["Alice"])
+    }
+
+    func testDeselectedPrimaryStillYieldsOwnerEmail() {
+        let json = Data(#"""
+        {"items":[
+          {"id":"alice@corp.com","primary":true,"selected":false},
+          {"id":"bob@corp.com","selected":true}
+        ]}
+        """#.utf8)
+        let parsed = GoogleCalendarAPI.parseCalendarList(json)
+        XCTAssertEqual(parsed.userEmails, ["alice@corp.com"])
+        XCTAssertEqual(parsed.selectedIDs, ["bob@corp.com"])
+        XCTAssertTrue(GoogleCalendarAPI.isOwnCalendar("alice@corp.com", userEmails: parsed.userEmails))
+        XCTAssertFalse(GoogleCalendarAPI.isOwnCalendar("bob@corp.com", userEmails: parsed.userEmails))
+    }
+
     func testUserCopyMergedWithColleagueDeclinedCopyKeepsEvent() throws {
         let userEmails: Set = ["alice@corp.com"]
         let userCopy = try XCTUnwrap(Self.parseCopy(

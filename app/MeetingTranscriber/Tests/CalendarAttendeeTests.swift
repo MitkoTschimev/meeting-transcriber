@@ -18,6 +18,7 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertEqual(plus.pickerName, "Alice")
         let compact = CalendarAttendee(email: "jsmith@corp.com")
         XCTAssertEqual(compact.pickerName, "Jsmith")
+        XCTAssertEqual(CalendarAttendee(displayName: "John smith").pickerName, "John Smith")
     }
 
     func testDisplayNameThatIsAnEmailCountsAsMissing() throws {
@@ -54,15 +55,17 @@ final class CalendarAttendeeTests: XCTestCase {
             CalendarAttendee(email: "12345@corp.com"),
             CalendarAttendee(email: "a@corp.com"),
             CalendarAttendee(email: "bounce+abc=x.com@corp.com"),
+            CalendarAttendee(email: "calendar-noreply@corp.com"),
+            CalendarAttendee(email: "support@corp.com"),
+            CalendarAttendee(email: "info@corp.com"),
+            CalendarAttendee(email: "admin@corp.com"),
+            CalendarAttendee(email: "team@corp.com"),
             CalendarAttendee(email: "\"quoted\"@corp.com", displayName: "\"Jane Doe\""),
         ]
-        XCTAssertEqual(junk[0].pickerName, "")
-        XCTAssertEqual(junk[1].pickerName, "")
-        XCTAssertEqual(junk[2].pickerName, "")
-        XCTAssertEqual(junk[3].pickerName, "")
-        XCTAssertEqual(junk[4].pickerName, "")
-        XCTAssertEqual(junk[5].pickerName, "")
-        XCTAssertEqual(junk[6].pickerName, "Jane Doe")
+        for index in 0 ..< 11 {
+            XCTAssertEqual(junk[index].pickerName, "")
+        }
+        XCTAssertEqual(junk[11].pickerName, "Jane Doe")
         XCTAssertEqual(CalendarAttendeePicker.names(from: junk), ["Jane Doe"])
         let long = String(repeating: "n", count: 80)
         XCTAssertLessThanOrEqual(
@@ -248,6 +251,40 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertEqual(merged.status, .declined)
         XCTAssertTrue(apple.isSamePerson(as: google))
         XCTAssertTrue(merged.markingSelf(ifEmailIn: ["alice@corp.com"]).isSelf)
+    }
+
+    func testMarkingSelfOnlyAddsNeverClears() {
+        let apple = CalendarAttendee(
+            email: "mitko@work.com",
+            displayName: "Mitko T",
+            isSelf: true,
+            status: .accepted,
+        )
+        let marked = apple.markingSelf(ifEmailIn: ["mitko@gmail.com"])
+        XCTAssertTrue(marked.isSelf)
+        XCTAssertEqual(CalendarAttendeePicker.names(from: [marked], selfEmails: ["mitko@gmail.com"]), [])
+        let declined = CalendarEvent(
+            id: "d",
+            title: "Skip this",
+            start: Date(timeIntervalSince1970: 1_000_000),
+            end: Date(timeIntervalSince1970: 1_003_600),
+            source: .apple,
+            attendees: [
+                CalendarAttendee(
+                    email: "mitko@work.com",
+                    displayName: "Mitko T",
+                    isSelf: true,
+                    status: .declined,
+                ),
+            ],
+        )
+        let googleEmails: Set = ["mitko@gmail.com"]
+        XCTAssertTrue(declined.markingCurrentUser(emails: googleEmails).declinedByCurrentUser(emails: googleEmails))
+        XCTAssertNil(CalendarTitlePolicy.overlappingEvent(
+            in: [declined.markingCurrentUser(emails: googleEmails)],
+            at: declined.start.addingTimeInterval(60),
+            userEmails: googleEmails,
+        ))
     }
 
     func testAppleStatusAndResourceMapping() {

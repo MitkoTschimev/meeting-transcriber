@@ -278,6 +278,7 @@ class PipelineQueue {
     /// Simple init for skeleton tests and basic queue usage.
     init(
         logDir: URL? = nil,
+        stagingDir: URL? = nil,
         speakerMatcherFactory: @escaping () -> SpeakerMatcher = PipelineQueue.throwawayMatcherFactory(),
         snapshotWriter: @escaping @Sendable ([PipelineJob], URL) throws -> Void = PipelineSnapshot.save,
         stageTimingLog: StageTimingLog? = nil,
@@ -297,7 +298,7 @@ class PipelineQueue {
         self.outputDir = nil
         securityScope = .live
         scopedOutputDir = nil
-        stagingDir = AppPaths.recordingsDir
+        self.stagingDir = stagingDir ?? AppPaths.recordingsDir
         self.diarizeEnabled = false
         echoDedupEnabled = true
         isEchoCancellationEnabled = echoCancellationEnabled

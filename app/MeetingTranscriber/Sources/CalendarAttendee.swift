@@ -42,7 +42,9 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
     /// Name shown in speaker-naming menus: a real display name, else a
     /// humanized email local-part (`john.smith@corp.com` → `John Smith`).
     var pickerName: String {
-        if let named = Self.sanitizedDisplayName(displayName) { return named }
+        if let named = Self.sanitizedDisplayName(displayName) {
+            return Self.capitalizingWords(named)
+        }
         return Self.humanizedLocalPart(of: email)
     }
 
@@ -82,7 +84,7 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
             email: email ?? other.email,
             displayName: name,
             // Google `self` is calendar-local. Do not absorb it from the
-            // other copy — `markingSelf` restamps from known user emails.
+            // other copy; colleague copies are unmarked when the event is read.
             isSelf: isSelf,
             isOrganizer: isOrganizer || other.isOrganizer,
             isResource: isResource || other.isResource,
@@ -94,12 +96,12 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
     func markingSelf(ifEmailIn emails: Set<String>) -> Self {
         guard !emails.isEmpty else { return self }
         guard let mail = normalizedEmail else { return self }
-        let matches = emails.contains(mail)
-        if matches == isSelf { return self }
+        let flagged = isSelf || emails.contains(mail)
+        if flagged == isSelf { return self }
         return Self(
             email: email,
             displayName: displayName,
-            isSelf: matches,
+            isSelf: true,
             isOrganizer: isOrganizer,
             isResource: isResource,
             isGroup: isGroup,
@@ -145,10 +147,10 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
         let local = strippedQuotes(localPart(of: email ?? ""))
         let untagged = local.split(separator: "+").first.map(String.init) ?? local
         let compact = untagged.lowercased()
-        if compact.isEmpty || Self.automatedLocalParts.contains(compact) { return "" }
+        if compact.isEmpty || isAutomatedLocalPart(compact) { return "" }
         let letterCount = compact.filter(\.isLetter).count
         if letterCount < 2 { return "" }
-        let words = untagged.split { $0 == "." || $0 == "_" || $0 == "-" }
+        let words = untagged.split { $0 == "." || $0 == "_" || $0 == "-" || $0 == " " }
             .map(String.init)
             .filter { !$0.isEmpty }
             .map { token -> String in
@@ -156,9 +158,24 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
                 guard let first = lower.first else { return "" }
                 return String(first).uppercased() + lower.dropFirst()
             }
-        let joined = words.joined(separator: " ")
+        let joined = capitalizingWords(words.joined(separator: " "))
         if joined.count <= maxPickerNameLength { return joined }
         return String(joined.prefix(maxPickerNameLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func capitalizingWords(_ raw: String) -> String {
+        raw.split(separator: " ", omittingEmptySubsequences: false).map { word in
+            guard let first = word.first else { return "" }
+            return String(first).uppercased() + word.dropFirst()
+        }.joined(separator: " ")
+    }
+
+    static func isAutomatedLocalPart(_ compact: String) -> Bool {
+        if automatedLocalParts.contains(compact) { return true }
+        if compact.contains("noreply") || compact.contains("no-reply") || compact.contains("no_reply") {
+            return true
+        }
+        return compact.contains("notification")
     }
 
     private static let automatedLocalParts: Set<String> = [
@@ -167,6 +184,7 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable {
         "notifications", "notification", "notify", "daemon",
         "calendar-notification", "calendar.notification", "calendar_notification",
         "automail", "auto-reply", "autoreply",
+        "support", "info", "admin", "team",
     ]
 
     static func email(fromMailto url: URL?) -> String? {
