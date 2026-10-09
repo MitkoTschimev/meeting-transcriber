@@ -1,3 +1,5 @@
+import AppKit
+import MarkdownUI
 import SwiftUI
 
 /// How generated notes are shown. Preview is the default; Source is the raw
@@ -20,29 +22,43 @@ enum NotesMarkdownMode: String, CaseIterable, Identifiable {
 }
 
 /// Rendered (or raw) notes body plus a collapsed Full Transcript appendix.
+///
+/// The split and `MarkdownContent` are computed in `init` so toggling Preview /
+/// Source does not re-parse a long notes string on every redraw.
 struct MeetingNotesSummaryDocument: View {
     let markdown: String
+    var mentions: [SpeakerMentionText.Mention] = []
+    var copyTranscript: (String) -> Void = writeTranscriptToPasteboard
+
+    private let split: NotesMarkdownSplit
+    private let notesContent: MarkdownContent
 
     @State private var mode: NotesMarkdownMode
     @State private var showingTranscript: Bool
 
     init(
         markdown: String,
+        mentions: [SpeakerMentionText.Mention] = [],
         initialMode: NotesMarkdownMode = .preview,
         transcriptExpanded: Bool = false,
+        copyTranscript: @escaping (String) -> Void = writeTranscriptToPasteboard,
     ) {
         self.markdown = markdown
+        self.mentions = mentions
+        self.copyTranscript = copyTranscript
+        let parsed = NotesMarkdownSplit.parse(markdown)
+        split = parsed
+        notesContent = MarkdownContent(parsed.notes)
         _mode = State(initialValue: initialMode)
         _showingTranscript = State(initialValue: transcriptExpanded)
     }
 
     var body: some View {
-        let split = NotesMarkdownSplit.parse(markdown)
         VStack(alignment: .leading, spacing: 16) {
             modePicker
-            notesBody(split.notes)
+            notesBody
             if let transcript = split.transcript {
-                transcriptDisclosure(transcript)
+                transcriptChrome(transcript)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -59,14 +75,13 @@ struct MeetingNotesSummaryDocument: View {
         .accessibilityIdentifier(A11yID.meetingNotesDisplayMode)
     }
 
-    @ViewBuilder
-    private func notesBody(_ notes: String) -> some View {
+    @ViewBuilder private var notesBody: some View {
         switch mode {
         case .preview:
-            NotesMarkdownView(markdown: notes)
+            NotesMarkdownView(content: notesContent, mentions: mentions)
 
         case .source:
-            Text(notes)
+            Text(split.notes)
                 .font(.body)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,14 +89,29 @@ struct MeetingNotesSummaryDocument: View {
         }
     }
 
-    private func transcriptDisclosure(_ transcript: String) -> some View {
-        DisclosureGroup("Full Transcript", isExpanded: $showingTranscript) {
-            if showingTranscript {
-                NotesTranscriptAppendix(text: transcript)
+    private func transcriptChrome(_ transcript: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                DisclosureGroup("Full Transcript", isExpanded: $showingTranscript) {
+                    if showingTranscript {
+                        NotesTranscriptAppendix(text: transcript)
+                    }
+                }
+                .accessibilityIdentifier(A11yID.meetingNotesFullTranscriptDisclosure)
+                Spacer(minLength: 12)
+                Button("Copy transcript") {
+                    copyTranscript(transcript)
+                }
+                .accessibilityIdentifier(A11yID.meetingNotesCopyTranscript)
             }
         }
-        .accessibilityIdentifier(A11yID.meetingNotesFullTranscriptDisclosure)
     }
+}
+
+func writeTranscriptToPasteboard(_ text: String) {
+    let board = NSPasteboard.general
+    board.clearContents()
+    board.setString(text, forType: .string)
 }
 
 /// Timestamped speech from the protocol appendix, one line per row so a long

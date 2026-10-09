@@ -1,4 +1,5 @@
 @testable import MeetingTranscriber
+import SwiftUI
 import ViewInspector
 import XCTest
 
@@ -71,6 +72,47 @@ final class MeetingNotesSummaryDocumentTests: XCTestCase {
         )
     }
 
+    func testCopyTranscriptButtonCopiesCollapsedAppendix() throws {
+        let box = CopyBox()
+        let view = MeetingNotesSummaryDocument(markdown: Self.notesWithTranscript) { box.text = $0 }
+        let body = try view.inspect()
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesCopyTranscript))
+        try body.find(button: "Copy transcript").tap()
+        XCTAssertEqual(box.text, "[00:27] Mitko: Hey")
+        XCTAssertThrowsError(try body.find(text: "[00:27] Mitko: Hey"))
+    }
+
+    func testPreviewKeepsAssigneeMentions() throws {
+        let view = MeetingNotesSummaryDocument(
+            markdown: "Ask @Mitko to ship it.",
+            mentions: [SpeakerMentionText.Mention(names: ["Mitko"], color: .red)],
+        )
+        let body = try view.inspect()
+        XCTAssertNoThrow(try body.find(text: "Ask @Mitko to ship it."))
+        var attributed = AttributedString("Ask @Mitko to ship it.")
+        SpeakerMentionText.applyMentions(
+            &attributed,
+            mentions: [SpeakerMentionText.Mention(names: ["Mitko"], color: .red)],
+        )
+        XCTAssertNotNil(Self.backgroundColor(of: "@Mitko", in: attributed))
+    }
+
+    func testRetryUIAndDocumentAreBothFindable() throws {
+        let stack = VStack {
+            MeetingNotesSummaryFailure(
+                message: "Notes could not be generated (timeout). The transcript was saved.",
+                hint: nil,
+                retryEnabled: true,
+            ) {}
+            MeetingNotesSummaryDocument(markdown: "# Hello")
+        }
+        let body = try stack.inspect()
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesSummaryError))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesRetryButton))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesMarkdownPreview))
+        XCTAssertNoThrow(try body.find(text: "Hello"))
+    }
+
     func testPreviewStripsInlineMarkers() throws {
         let view = MeetingNotesSummaryDocument(
             markdown: "Use **bold** and `code` and *italic*.",
@@ -78,6 +120,13 @@ final class MeetingNotesSummaryDocumentTests: XCTestCase {
         let body = try view.inspect()
         XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesMarkdownPreview))
         XCTAssertThrowsError(try body.find(text: "Use **bold** and `code` and *italic*."))
+    }
+
+    private static func backgroundColor(of snippet: String, in attributed: AttributedString) -> Color? {
+        let plain = String(attributed.characters)
+        guard let stringRange = plain.range(of: snippet),
+              let attrRange = Range(stringRange, in: attributed) else { return nil }
+        return attributed[attrRange].backgroundColor
     }
 
     private static let notesWithTranscript = """
@@ -91,4 +140,8 @@ final class MeetingNotesSummaryDocumentTests: XCTestCase {
 
     [00:27] Mitko: Hey
     """
+}
+
+private final class CopyBox {
+    var text: String?
 }

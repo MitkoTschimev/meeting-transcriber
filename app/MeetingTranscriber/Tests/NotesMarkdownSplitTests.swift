@@ -45,6 +45,40 @@ final class NotesMarkdownSplitTests: XCTestCase {
         )
     }
 
+    func testMidLineHashPrefixDoesNotSplit() {
+        let markdown = """
+        # Notes
+        We wrote see ### Full Transcript later in the agenda.
+
+        ## Action items
+        - none
+        """
+        let split = NotesMarkdownSplit.parse(markdown)
+        XCTAssertEqual(split.notes, markdown)
+        XCTAssertNil(split.transcript)
+        XCTAssertTrue(split.notes.contains("### Full Transcript later"))
+    }
+
+    func testLastHeadingWinsAndIgnoresCase() {
+        let markdown = """
+        # Notes
+        ### Full Transcript
+        Topic notes about the appendix.
+
+        ---
+
+        # Full transcript
+
+        [00:00] Hi
+        [00:01] Bye
+        """
+        let split = NotesMarkdownSplit.parse(markdown)
+        XCTAssertTrue(split.notes.contains("### Full Transcript"))
+        XCTAssertTrue(split.notes.contains("Topic notes about the appendix."))
+        XCTAssertFalse(split.notes.contains("[00:00] Hi"))
+        XCTAssertEqual(split.transcript, "[00:00] Hi\n[00:01] Bye")
+    }
+
     func testEmptyAppendixIsOmitted() {
         let markdown = """
         # Notes

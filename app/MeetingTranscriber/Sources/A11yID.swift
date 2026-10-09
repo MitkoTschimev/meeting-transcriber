@@ -168,6 +168,7 @@ enum A11yID {
     static let meetingNotesMarkdownSource = "meetingNotesMarkdownSource"
     static let meetingNotesFullTranscriptDisclosure = "meetingNotesFullTranscriptDisclosure"
     static let meetingNotesFullTranscript = "meetingNotesFullTranscript"
+    static let meetingNotesCopyTranscript = "meetingNotesCopyTranscript"
 
     // Calendar connections (Settings → General).
     static let appleCalendarToggle = "appleCalendarToggle"
