@@ -5,7 +5,7 @@ import XCTest
 final class WatchLoopCalendarTests: XCTestCase {
     private func makeIsolatedQueue() throws -> PipelineQueue {
         let tmp = try makeTempDirectory(prefix: "watchLoopCalQ")
-        return PipelineQueue(logDir: tmp) { _, _ in }
+        return PipelineQueue(logDir: tmp, snapshotWriter: { _, _ in }) // swiftlint:disable:this trailing_closure
     }
 
     func testManualRecordingUsesCalendarTitleWhenDetectedTitleIsGeneric() async throws {
