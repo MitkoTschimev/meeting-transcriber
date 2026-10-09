@@ -22,7 +22,7 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertNil(CalendarAttendee.email(fromMailto: URL(string: "https://example.com")))
     }
 
-    func testAppleMappingSkipsNamelessResources() {
+    func testAppleMappingSkipsNamelessResources() throws {
         XCTAssertNil(CalendarAttendeeMapping.apple(
             name: nil,
             url: nil,
