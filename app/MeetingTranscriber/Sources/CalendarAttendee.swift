@@ -2,26 +2,30 @@ import Foundation
 
 /// RSVP for a calendar attendee. Apple EventKit and Google Calendar both map
 /// into this so picker filtering does not depend on either SDK.
-enum CalendarAttendeeStatus: String, Codable, Sendable {
+enum CalendarAttendeeStatus: String, Sendable {
     case accepted
     case declined
     case tentative
-    // swiftlint:disable:next raw_value_for_camel_cased_codable_enum
     case needsAction
     case unknown
 }
 
 /// One person (or resource) on a calendar event, from EventKit or Google.
-struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
+///
+/// `email` is kept in memory for merge/self detection only. Picker names and
+/// anything written to disk (`participants`, sidecar, `_naming.json`) use
+/// `pickerName`, which never contains `@`.
+struct CalendarAttendee: Equatable, Identifiable, Sendable {
     let email: String?
     let displayName: String?
     let isSelf: Bool
     let isOrganizer: Bool
     let isResource: Bool
+    let isGroup: Bool
     let status: CalendarAttendeeStatus
 
     var id: String {
-        let mail = email?.lowercased() ?? ""
+        let mail = normalizedEmail ?? ""
         let name = displayName?.lowercased() ?? ""
         return "\(mail)|\(name)"
     }
@@ -30,12 +34,16 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
         status == .declined
     }
 
-    /// Name shown in speaker-naming menus: display name, else the email
-    /// local-part (`alice@corp.com` → `alice`). Empty when neither exists.
+    var normalizedEmail: String? {
+        let trimmed = email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Name shown in speaker-naming menus: a real display name, else a
+    /// humanized email local-part (`john.smith@corp.com` → `John Smith`).
     var pickerName: String {
-        let named = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !named.isEmpty { return named }
-        return Self.localPart(of: email ?? "")
+        if let named = Self.sanitizedDisplayName(displayName) { return named }
+        return Self.humanizedLocalPart(of: email)
     }
 
     init(
@@ -44,6 +52,7 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
         isSelf: Bool = false,
         isOrganizer: Bool = false,
         isResource: Bool = false,
+        isGroup: Bool = false,
         status: CalendarAttendeeStatus = .unknown,
     ) {
         self.email = email
@@ -51,7 +60,61 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
         self.isSelf = isSelf
         self.isOrganizer = isOrganizer
         self.isResource = isResource
+        self.isGroup = isGroup
         self.status = status
+    }
+
+    func isSamePerson(as other: Self) -> Bool {
+        if let email = normalizedEmail, email == other.normalizedEmail { return true }
+        if normalizedEmail != nil, other.normalizedEmail != nil { return false }
+        let left = pickerName.lowercased()
+        let right = other.pickerName.lowercased()
+        return !left.isEmpty && left == right
+    }
+
+    func merging(_ other: Self) -> Self {
+        let name: String? = if let mine = Self.sanitizedDisplayName(displayName) {
+            mine
+        } else {
+            Self.sanitizedDisplayName(other.displayName)
+        }
+        return Self(
+            email: email ?? other.email,
+            displayName: name,
+            isSelf: isSelf || other.isSelf,
+            isOrganizer: isOrganizer || other.isOrganizer,
+            isResource: isResource || other.isResource,
+            isGroup: isGroup || other.isGroup,
+            status: Self.combinedStatus(status, other.status),
+        )
+    }
+
+    func markingSelf(ifEmailIn emails: Set<String>) -> Self {
+        let matches = normalizedEmail.map { emails.contains($0) } ?? false
+        if !matches || isSelf { return self }
+        return Self(
+            email: email,
+            displayName: displayName,
+            isSelf: true,
+            isOrganizer: isOrganizer,
+            isResource: isResource,
+            isGroup: isGroup,
+            status: status,
+        )
+    }
+
+    static func looksLikeEmail(_ raw: String) -> Bool {
+        raw.contains("@")
+    }
+
+    static func sanitizedDisplayName(_ raw: String?) -> String? {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty || looksLikeEmail(trimmed) { return nil }
+        return trimmed
+    }
+
+    static func persistableName(_ raw: String) -> String? {
+        sanitizedDisplayName(raw)
     }
 
     static func localPart(of email: String) -> String {
@@ -59,6 +122,21 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
         guard !trimmed.isEmpty else { return "" }
         let at = trimmed.firstIndex(of: "@") ?? trimmed.endIndex
         return String(trimmed[..<at])
+    }
+
+    /// `john.smith`, `john_smith`, `alice+tag@…` → `John Smith` / `Alice`.
+    static func humanizedLocalPart(of email: String?) -> String {
+        let local = localPart(of: email ?? "")
+        let untagged = local.split(separator: "+").first.map(String.init) ?? local
+        let words = untagged.split { $0 == "." || $0 == "_" || $0 == "-" }
+            .map(String.init)
+            .filter { !$0.isEmpty }
+            .map { token -> String in
+                let lower = token.lowercased()
+                guard let first = lower.first else { return "" }
+                return String(first).uppercased() + lower.dropFirst()
+            }
+        return words.joined(separator: " ")
     }
 
     static func email(fromMailto url: URL?) -> String? {
@@ -72,15 +150,34 @@ struct CalendarAttendee: Equatable, Identifiable, Sendable, Codable {
         }
         return nil
     }
+
+    static func combinedStatus(
+        _ lhs: CalendarAttendeeStatus,
+        _ rhs: CalendarAttendeeStatus,
+    ) -> CalendarAttendeeStatus {
+        if lhs == .declined || rhs == .declined { return .declined }
+        let rank: [CalendarAttendeeStatus: Int] = [
+            .accepted: 0,
+            .tentative: 1,
+            .needsAction: 2,
+            .unknown: 3,
+        ]
+        return (rank[lhs] ?? 3) <= (rank[rhs] ?? 3) ? lhs : rhs
+    }
 }
 
-/// Builds the pickable name list from calendar attendees: skip resources and
-/// the current user, put declined last, de-dupe case-insensitively.
+/// Builds the pickable name list from calendar attendees: skip resources,
+/// groups, and the current user; put declined last; de-dupe case-insensitively.
 enum CalendarAttendeePicker {
-    static func names(from attendees: [CalendarAttendee]) -> [String] {
-        let eligible = attendees.filter { attendee in
-            !attendee.isResource && !attendee.isSelf && !attendee.pickerName.isEmpty
-        }
+    static func names(
+        from attendees: [CalendarAttendee],
+        selfEmails: Set<String> = [],
+    ) -> [String] {
+        let eligible = attendees
+            .map { $0.markingSelf(ifEmailIn: selfEmails) }
+            .filter { attendee in
+                !attendee.isResource && !attendee.isGroup && !attendee.isSelf && !attendee.pickerName.isEmpty
+            }
         let ordered = eligible.enumerated().sorted { lhs, rhs in
             if lhs.element.isDeclined != rhs.element.isDeclined {
                 return !lhs.element.isDeclined
@@ -92,7 +189,7 @@ enum CalendarAttendeePicker {
         var seen: Set<String> = []
         var names: [String] = []
         for item in ordered {
-            let name = item.element.pickerName
+            guard let name = CalendarAttendee.persistableName(item.element.pickerName) else { continue }
             guard seen.insert(name.lowercased()).inserted else { continue }
             names.append(name)
         }
@@ -100,13 +197,31 @@ enum CalendarAttendeePicker {
     }
 
     /// Teams AX names first, then calendar picker names not already present.
+    /// Names that look like emails are dropped so they never reach disk.
     static func merge(teams: [String], attendees: [CalendarAttendee]) -> [String] {
         var seen: Set<String> = []
         var result: [String] = []
         for name in teams + names(from: attendees) {
-            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            guard let trimmed = CalendarAttendee.persistableName(name) else { continue }
+            guard seen.insert(trimmed.lowercased()).inserted else { continue }
             result.append(trimmed)
+        }
+        return result
+    }
+
+    static func preferredSpelling(_ name: String, among known: [String]) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return known.first { $0.caseInsensitiveCompare(trimmed) == .orderedSame } ?? trimmed
+    }
+
+    static func preferredSpellings(_ names: [String], among known: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for name in names {
+            let displayed = preferredSpelling(name, among: known)
+            guard let persistable = CalendarAttendee.persistableName(displayed) else { continue }
+            guard seen.insert(persistable.lowercased()).inserted else { continue }
+            result.append(persistable)
         }
         return result
     }
@@ -124,6 +239,7 @@ enum CalendarAttendeeMapping {
         isOrganizer: Bool,
         isResource: Bool,
         status: CalendarAttendeeStatus,
+        isGroup: Bool = false,
     ) -> CalendarAttendee? {
         make(
             email: CalendarAttendee.email(fromMailto: url),
@@ -131,6 +247,7 @@ enum CalendarAttendeeMapping {
             isSelf: isCurrentUser,
             isOrganizer: isOrganizer,
             isResource: isResource,
+            isGroup: isGroup,
             status: status,
         )
     }
@@ -143,6 +260,7 @@ enum CalendarAttendeeMapping {
         isOrganizer: Bool,
         isResource: Bool,
         responseStatus: String?,
+        isGroup: Bool = false,
     ) -> CalendarAttendee? {
         make(
             email: email,
@@ -150,6 +268,7 @@ enum CalendarAttendeeMapping {
             isSelf: isSelf,
             isOrganizer: isOrganizer,
             isResource: isResource,
+            isGroup: isGroup,
             status: googleStatus(responseStatus),
         )
     }
@@ -164,6 +283,13 @@ enum CalendarAttendeeMapping {
         }
     }
 
+    static func looksLikeGroup(email: String?, displayName: String?) -> Bool {
+        let name = displayName?.lowercased() ?? ""
+        if name.contains("mailing list") || name.contains("undisclosed") { return true }
+        let local = CalendarAttendee.localPart(of: email ?? "").lowercased()
+        return local.hasPrefix("group.") || local.hasSuffix(".group") || local == "undisclosed-recipients"
+    }
+
     // swiftlint:disable:next function_parameter_count
     private static func make(
         email: String?,
@@ -171,12 +297,12 @@ enum CalendarAttendeeMapping {
         isSelf: Bool,
         isOrganizer: Bool,
         isResource: Bool,
+        isGroup: Bool,
         status: CalendarAttendeeStatus,
     ) -> CalendarAttendee? {
         let trimmedEmail = email?.trimmingCharacters(in: .whitespacesAndNewlines)
         let mail = (trimmedEmail?.isEmpty ?? true) ? nil : trimmedEmail
-        let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = (trimmedName?.isEmpty ?? true) ? nil : trimmedName
+        let name = CalendarAttendee.sanitizedDisplayName(displayName)
         if mail == nil, name == nil { return nil }
         return CalendarAttendee(
             email: mail,
@@ -184,6 +310,7 @@ enum CalendarAttendeeMapping {
             isSelf: isSelf,
             isOrganizer: isOrganizer,
             isResource: isResource,
+            isGroup: isGroup,
             status: status,
         )
     }

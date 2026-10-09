@@ -45,6 +45,7 @@ enum AppleCalendarMapper {
         location: String?,
         calendarName: String?,
         attendees: [CalendarAttendee] = [],
+        isCancelled: Bool = false,
     ) -> CalendarEvent? {
         guard let start, let end else { return nil }
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -58,6 +59,7 @@ enum AppleCalendarMapper {
             joinURL: MeetingLinkExtractor.url(from: [location, notes], explicit: url),
             calendarName: calendarName,
             attendees: attendees,
+            isCancelled: isCancelled,
         )
     }
 
@@ -90,13 +92,31 @@ enum AppleCalendarMapper {
             isOrganizer: isOrganizer,
             isResource: isResource(participant.participantType),
             status: status(participant.participantStatus),
+            isGroup: isGroup(participant.participantType),
         )
     }
 
     static func isResource(_ type: EKParticipantType) -> Bool {
         switch type {
         case .room, .resource: true
-        default: false
+        case .unknown, .person, .group: false
+        @unknown default: false
+        }
+    }
+
+    static func isGroup(_ type: EKParticipantType) -> Bool {
+        switch type {
+        case .group: true
+        case .unknown, .person, .room, .resource: false
+        @unknown default: false
+        }
+    }
+
+    static func isCancelled(_ status: EKEventStatus) -> Bool {
+        switch status {
+        case .canceled: true
+        case .none, .confirmed, .tentative: false
+        @unknown default: false
         }
     }
 
@@ -147,6 +167,7 @@ final class EventKitAppleCalendarAccess: AppleCalendarAccessing {
                 location: ek.location,
                 calendarName: ek.calendar?.title,
                 attendees: AppleCalendarMapper.attendees(from: ek),
+                isCancelled: AppleCalendarMapper.isCancelled(ek.status),
             )
         }
     }

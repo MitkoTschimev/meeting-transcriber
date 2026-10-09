@@ -45,9 +45,11 @@ struct LiveSpeakerNaming {
         var seen: Set<String> = current.isEmpty ? [] : [current]
         var calendar: [String] = []
         for name in calendarAttendeeNames {
-            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
-            calendar.append(trimmed)
+            let displayed = CalendarAttendeePicker.preferredSpelling(name, among: savedVoiceNames)
+            guard let persistable = CalendarAttendee.persistableName(displayed) else { continue }
+            guard seen.insert(persistable.lowercased()).inserted else { continue }
+            calendar.append(persistable)
+            if calendar.count == Self.maxSuggestions { break }
         }
         let others = suggestions(for: speakerID).filter { name in
             !calendar.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
@@ -131,6 +133,7 @@ struct LiveSpeakerMenu: View {
             Section("From calendar") {
                 ForEach(menu.calendar, id: \.self) { name in
                     Button(name) { naming.onAssign(speakerID, name) }
+                        .accessibilityIdentifier(A11yID.meetingNotesCalendarAttendee(name))
                 }
             }
         }

@@ -49,6 +49,40 @@ final class CalendarAgendaTests: XCTestCase {
         XCTAssertEqual(merged.first?.attendees.map(\.pickerName), ["Alice"])
     }
 
+    func testMergeCombinesAppleAndGoogleCopiesOfTheSamePersonByEmail() {
+        let start = now.addingTimeInterval(3600)
+        let apple = CalendarEvent(
+            id: "a",
+            title: "Standup",
+            start: start,
+            end: start.addingTimeInterval(1800),
+            source: .apple,
+            attendees: [
+                CalendarAttendee(email: "alice@corp.com", displayName: "Alice Chen", status: .accepted),
+                CalendarAttendee(email: "me@corp.com", displayName: "Mitko", isSelf: true),
+            ],
+        )
+        let google = CalendarEvent(
+            id: "g",
+            title: "Standup",
+            start: start,
+            end: start.addingTimeInterval(1800),
+            source: .google,
+            joinURL: URL(string: "https://meet.google.com/abc"),
+            attendees: [
+                CalendarAttendee(email: "ALICE@corp.com", displayName: nil, status: .tentative),
+                CalendarAttendee(email: "bob.lee@corp.com"),
+            ],
+        )
+        let merged = CalendarAgenda.merge([[apple], [google]])
+        let attendees = merged.first?.attendees ?? []
+        XCTAssertEqual(attendees.count, 3)
+        let alice = attendees.first { $0.normalizedEmail == "alice@corp.com" }
+        XCTAssertEqual(alice?.displayName, "Alice Chen")
+        XCTAssertEqual(alice?.status, .accepted)
+        XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Alice Chen", "Bob Lee"])
+    }
+
     func testUpcomingDropsPastAndCaps() {
         let past = CalendarEvent(
             id: "past",

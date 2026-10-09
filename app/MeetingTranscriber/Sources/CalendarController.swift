@@ -67,7 +67,19 @@ final class CalendarController {
     }
 
     func eventOverlapping(at date: Date) -> CalendarEvent? {
-        CalendarTitlePolicy.overlappingEvent(in: overlapEvents, at: date)
+        CalendarTitlePolicy.overlappingEvent(in: overlapEvents, at: date)?
+            .markingCurrentUser(emails: connectedAccountEmails)
+    }
+
+    /// Google token email plus any in-memory calendar owner emails. Used to
+    /// mark the current user when EventKit/`self` did not.
+    private var connectedAccountEmails: Set<String> {
+        var emails: Set<String> = []
+        if let googleEmail {
+            let trimmed = googleEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if trimmed.contains("@") { emails.insert(trimmed) }
+        }
+        return emails
     }
 
     func appleToggled(_ enabled: Bool) {
@@ -179,7 +191,7 @@ final class CalendarController {
             lastGoogleEvents = []
             groups = groups.map { $0.filter { $0.source != .google } }
         }
-        let merged = CalendarAgenda.merge(groups)
+        let merged = CalendarAgenda.merge(groups).map { $0.markingCurrentUser(emails: connectedAccountEmails) }
         overlapEvents = CalendarAgenda.inWindow(merged, from: instant)
         upcoming = CalendarAgenda.upcoming(merged, from: instant)
     }
@@ -208,6 +220,7 @@ final class CalendarController {
             let start = Calendar.current.startOfDay(for: instant)
             let end = Calendar.current.date(byAdding: .day, value: 2, to: start) ?? instant.addingTimeInterval(48 * 3600)
             let appleEvents = apple.events(from: start, to: end)
+                .map { $0.markingCurrentUser(emails: connectedAccountEmails) }
             overlapEvents = CalendarAgenda.inWindow(appleEvents, from: instant)
             upcoming = CalendarAgenda.upcoming(appleEvents, from: instant)
         } else {

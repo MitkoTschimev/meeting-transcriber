@@ -70,8 +70,43 @@ final class CalendarMappingTests: XCTestCase {
         XCTAssertEqual(attendees.count, 5)
         XCTAssertEqual(
             CalendarAttendeePicker.names(from: attendees),
-            ["Alice Chen", "bob", "Skip"],
+            ["Alice Chen", "Bob", "Skip"],
         )
+        XCTAssertFalse(CalendarAttendeePicker.names(from: attendees).contains { $0.contains("@") })
+    }
+
+    func testGoogleEventsJSONTreatsEmailDisplayNameAsMissingAndMarksCalendarOwnerSelf() throws {
+        let json = Data(#"""
+        {"items":[{
+          "id":"g1","summary":"Standup",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"},
+          "attendees":[
+            {"email":"me@corp.com","displayName":"me@corp.com","responseStatus":"accepted"},
+            {"email":"jane@corp.com","displayName":"jane@corp.com","responseStatus":"accepted"}
+          ]
+        }]}
+        """#.utf8)
+        let events = GoogleCalendarAPI.parseEvents(json, calendarName: "me@corp.com")
+        let attendees = try XCTUnwrap(events.first?.attendees)
+        XCTAssertEqual(events.first?.ownerEmail, "me@corp.com")
+        XCTAssertEqual(
+            attendees.first { $0.normalizedEmail == "me@corp.com" }?.isSelf,
+            true,
+        )
+        XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Jane"])
+    }
+
+    func testGoogleCancelledEventIsFlagged() {
+        let json = Data(#"""
+        {"items":[{
+          "id":"g1","summary":"Standup","status":"cancelled",
+          "start":{"dateTime":"2026-10-07T09:00:00Z"},
+          "end":{"dateTime":"2026-10-07T09:30:00Z"}
+        }]}
+        """#.utf8)
+        let events = GoogleCalendarAPI.parseEvents(json, calendarName: "primary")
+        XCTAssertEqual(events.first?.isCancelled, true)
     }
 
     func testAppleMapperKeepsAttendeesOnTheEvent() throws {

@@ -11,9 +11,49 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertEqual(attendee.pickerName, "Alice Smith")
     }
 
-    func testPickerNameFallsBackToEmailLocalPart() {
-        let attendee = CalendarAttendee(email: "bob.lee@corp.com")
-        XCTAssertEqual(attendee.pickerName, "bob.lee")
+    func testPickerNameHumanizesEmailLocalPart() {
+        let dotted = CalendarAttendee(email: "john.smith@corp.com")
+        XCTAssertEqual(dotted.pickerName, "John Smith")
+        let plus = CalendarAttendee(email: "alice+tag@corp.com")
+        XCTAssertEqual(plus.pickerName, "Alice")
+        let compact = CalendarAttendee(email: "jsmith@corp.com")
+        XCTAssertEqual(compact.pickerName, "Jsmith")
+    }
+
+    func testDisplayNameThatIsAnEmailCountsAsMissing() throws {
+        let apple = try XCTUnwrap(CalendarAttendeeMapping.apple(
+            name: "jane@corp.com",
+            url: URL(string: "mailto:jane@corp.com"),
+            isCurrentUser: false,
+            isOrganizer: false,
+            isResource: false,
+            status: .accepted,
+        ))
+        XCTAssertNil(apple.displayName)
+        XCTAssertEqual(apple.pickerName, "Jane")
+        XCTAssertFalse(apple.pickerName.contains("@"))
+
+        let google = try XCTUnwrap(CalendarAttendeeMapping.google(
+            email: "jane@corp.com",
+            displayName: "jane@corp.com",
+            isSelf: false,
+            isOrganizer: false,
+            isResource: false,
+            responseStatus: "accepted",
+        ))
+        XCTAssertNil(google.displayName)
+        XCTAssertEqual(google.pickerName, "Jane")
+        XCTAssertFalse(CalendarAttendeePicker.names(from: [apple, google]).contains { $0.contains("@") })
+    }
+
+    func testPickerNeverEmitsEmailAddresses() {
+        let attendees = [
+            CalendarAttendee(email: "raw@corp.com", displayName: "raw@corp.com"),
+            CalendarAttendee(email: "bob.lee@corp.com"),
+        ]
+        let names = CalendarAttendeePicker.names(from: attendees)
+        XCTAssertEqual(names, ["Bob Lee", "Raw"])
+        XCTAssertFalse(names.contains { $0.contains("@") })
     }
 
     func testMailtoURLExtractsEmail() throws {
@@ -41,6 +81,20 @@ final class CalendarAttendeeTests: XCTestCase {
         ))
         XCTAssertTrue(room.isResource)
         XCTAssertTrue(CalendarAttendeePicker.names(from: [room]).isEmpty)
+    }
+
+    func testPickerNamesSkipGroups() {
+        let group = CalendarAttendee(
+            email: "eng@corp.com",
+            displayName: "Engineering",
+            isGroup: true,
+        )
+        XCTAssertTrue(CalendarAttendeePicker.names(from: [group]).isEmpty)
+        XCTAssertTrue(AppleCalendarMapper.isGroup(.group))
+        XCTAssertFalse(AppleCalendarMapper.isGroup(.person))
+        XCTAssertTrue(CalendarAttendeeMapping.looksLikeGroup(
+            email: "list@corp.com", displayName: "Eng Mailing List",
+        ))
     }
 
     func testGoogleMappingReadsSelfOrganizerAndStatus() throws {
@@ -79,6 +133,17 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertEqual(CalendarAttendeePicker.names(from: attendees), ["Amy", "Dan", "Zoe"])
     }
 
+    func testPickerMarksSelfFromAccountEmails() {
+        let attendees = [
+            CalendarAttendee(email: "me@corp.com", displayName: "Mitko"),
+            CalendarAttendee(email: "amy@corp.com", displayName: "Amy"),
+        ]
+        XCTAssertEqual(
+            CalendarAttendeePicker.names(from: attendees, selfEmails: ["me@corp.com"]),
+            ["Amy"],
+        )
+    }
+
     func testPickerNamesDeduplicateCaseInsensitively() {
         let attendees = [
             CalendarAttendee(email: "a@corp.com", displayName: "Alice"),
@@ -98,9 +163,56 @@ final class CalendarAttendeeTests: XCTestCase {
         )
     }
 
+    func testMergeDropsEmailAddressesFromTeamsAndCalendar() {
+        let attendees = [
+            CalendarAttendee(email: "cara@corp.com", displayName: "cara@corp.com"),
+        ]
+        XCTAssertEqual(
+            CalendarAttendeePicker.merge(teams: ["xavier.y@corp.com", "Bob"], attendees: attendees),
+            ["Bob", "Cara"],
+        )
+        XCTAssertFalse(
+            CalendarAttendeePicker.merge(teams: ["xavier.y@corp.com"], attendees: attendees)
+                .contains { $0.contains("@") },
+        )
+    }
+
     func testMergeWithoutEventLeavesTeamsNamesUnchanged() {
         XCTAssertEqual(CalendarAttendeePicker.merge(teams: ["Bob"], attendees: []), ["Bob"])
         XCTAssertEqual(CalendarAttendeePicker.merge(teams: [], attendees: []), [])
+    }
+
+    func testPreferredSpellingUsesSavedVoiceCase() {
+        XCTAssertEqual(
+            CalendarAttendeePicker.preferredSpelling("alice", among: ["Alice", "Bob"]),
+            "Alice",
+        )
+        XCTAssertEqual(
+            CalendarAttendeePicker.preferredSpellings(["alice", "Cara"], among: ["Alice"]),
+            ["Alice", "Cara"],
+        )
+    }
+
+    func testSamePersonMergesByEmailAndCombinesFlags() {
+        let apple = CalendarAttendee(
+            email: "alice@corp.com",
+            displayName: "Alice Chen",
+            isSelf: false,
+            isResource: false,
+            status: .accepted,
+        )
+        let google = CalendarAttendee(
+            email: "Alice@corp.com",
+            displayName: nil,
+            isSelf: true,
+            isResource: false,
+            status: .declined,
+        )
+        let merged = apple.merging(google)
+        XCTAssertEqual(merged.displayName, "Alice Chen")
+        XCTAssertTrue(merged.isSelf)
+        XCTAssertEqual(merged.status, .declined)
+        XCTAssertTrue(apple.isSamePerson(as: google))
     }
 
     func testAppleStatusAndResourceMapping() {
@@ -111,5 +223,7 @@ final class CalendarAttendeeTests: XCTestCase {
         XCTAssertTrue(AppleCalendarMapper.isResource(.room))
         XCTAssertTrue(AppleCalendarMapper.isResource(.resource))
         XCTAssertFalse(AppleCalendarMapper.isResource(.person))
+        XCTAssertTrue(AppleCalendarMapper.isCancelled(.canceled))
+        XCTAssertFalse(AppleCalendarMapper.isCancelled(.confirmed))
     }
 }

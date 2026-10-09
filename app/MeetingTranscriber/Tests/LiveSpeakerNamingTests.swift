@@ -58,9 +58,26 @@ final class LiveSpeakerNamingTests: XCTestCase {
         let naming = naming(saved: ["Alice", "Bob"], calendar: ["Carol", "alice", "Me"])
         let placeholder = try id(of: "Speaker 1", in: naming)
         let menu = naming.suggestionMenu(for: placeholder)
-        XCTAssertEqual(menu.calendar, ["Carol", "alice", "Me"])
+        XCTAssertEqual(menu.calendar, ["Carol", "Alice", "Me"])
         XCTAssertEqual(menu.others, ["Bob"])
         XCTAssertFalse(menu.others.contains("Alice"))
+    }
+
+    func testMenuUsesSavedVoiceSpellingWhenCaseDiffers() throws {
+        let naming = naming(saved: ["Alice Chen"], calendar: ["alice chen", "Bob"])
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        XCTAssertEqual(naming.suggestionMenu(for: placeholder).calendar, ["Alice Chen", "Bob"])
+        XCTAssertFalse(naming.suggestionMenu(for: placeholder).others.contains("Alice Chen"))
+    }
+
+    func testMenuCapsCalendarNamesAtMaxSuggestions() throws {
+        let calendar = (1 ... 20).map { "Person \($0)" }
+        let naming = naming(saved: [], calendar: calendar)
+        let placeholder = try id(of: "Speaker 1", in: naming)
+        XCTAssertEqual(
+            naming.suggestionMenu(for: placeholder).calendar.count,
+            LiveSpeakerNaming.maxSuggestions,
+        )
     }
 
     func testMenuOmitsTheCurrentNameFromCalendar() throws {

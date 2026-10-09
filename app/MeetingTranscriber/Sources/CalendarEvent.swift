@@ -24,6 +24,12 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
     /// when calendars are off. Stored on the recording so live and later
     /// speaker naming can offer the same list.
     let attendees: [CalendarAttendee]
+    /// True when the provider marked the event cancelled. Overlap matching
+    /// skips these so a recording does not inherit a cancelled invite.
+    let isCancelled: Bool
+    /// Calendar / source account email when the provider exposes one
+    /// (Google calendar id). Used in memory to recognise the current user.
+    let ownerEmail: String?
 
     init(
         id: String,
@@ -35,6 +41,8 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         joinURL: URL? = nil,
         calendarName: String? = nil,
         attendees: [CalendarAttendee] = [],
+        isCancelled: Bool = false,
+        ownerEmail: String? = nil,
     ) {
         self.id = id
         self.title = title
@@ -45,6 +53,12 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
         self.source = source
         self.calendarName = calendarName
         self.attendees = attendees
+        self.isCancelled = isCancelled
+        self.ownerEmail = ownerEmail
+    }
+
+    var currentUserDeclined: Bool {
+        attendees.contains { $0.isSelf && $0.isDeclined }
     }
 
     func withAttendees(_ attendees: [CalendarAttendee]) -> Self {
@@ -58,7 +72,19 @@ struct CalendarEvent: Equatable, Identifiable, Sendable {
             joinURL: joinURL,
             calendarName: calendarName,
             attendees: attendees,
+            isCancelled: isCancelled,
+            ownerEmail: ownerEmail,
         )
+    }
+
+    func markingCurrentUser(emails: Set<String>) -> Self {
+        var accounts = emails
+        if let owner = ownerEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           owner.contains("@") {
+            accounts.insert(owner)
+        }
+        guard !accounts.isEmpty else { return self }
+        return withAttendees(attendees.map { $0.markingSelf(ifEmailIn: accounts) })
     }
 
     var sourceLabel: String {

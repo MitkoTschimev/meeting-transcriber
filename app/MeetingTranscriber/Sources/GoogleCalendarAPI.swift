@@ -103,6 +103,7 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
             from: [item.hangoutLink, item.location, item.description],
             explicit: item.conferenceURI.flatMap(URL.init(string:)),
         )
+        let owner = ownerEmail(calendarName)
         return CalendarEvent(
             id: "google:\(item.id ?? UUID().uuidString)",
             title: title.isEmpty ? "Busy" : title,
@@ -112,43 +113,60 @@ struct GoogleCalendarAPI: GoogleCalendarFetching, Sendable {
             isAllDay: item.start?.date != nil,
             joinURL: join,
             calendarName: calendarName,
-            attendees: attendees(from: item),
+            attendees: attendees(from: item, accountEmails: accountEmails(calendarName: calendarName, item: item)),
+            isCancelled: item.status?.lowercased() == "cancelled",
+            ownerEmail: owner,
         )
     }
 
-    private static func attendees(from item: EventItem) -> [CalendarAttendee] {
-        var mapped = (item.attendees ?? []).compactMap { person in
-            CalendarAttendeeMapping.google(
+    private static func ownerEmail(_ calendarName: String?) -> String? {
+        let trimmed = calendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.contains("@") ? trimmed : nil
+    }
+
+    private static func accountEmails(calendarName: String?, item: EventItem) -> Set<String> {
+        var emails: Set<String> = []
+        func add(_ raw: String?) {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            if trimmed.contains("@") { emails.insert(trimmed) }
+        }
+        add(calendarName)
+        if item.organizer?.isSelf == true { add(item.organizer?.email) }
+        if item.creator?.isSelf == true { add(item.creator?.email) }
+        return emails
+    }
+
+    private static func attendees(from item: EventItem, accountEmails: Set<String>) -> [CalendarAttendee] {
+        func mapped(_ person: GooglePerson, isOrganizer: Bool) -> CalendarAttendee? {
+            let email = person.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let isSelf = person.isSelf == true || (email.map { accountEmails.contains($0) } ?? false)
+            return CalendarAttendeeMapping.google(
                 email: person.email,
                 displayName: person.displayName,
-                isSelf: person.isSelf == true,
-                isOrganizer: person.organizer == true,
+                isSelf: isSelf,
+                isOrganizer: isOrganizer || person.organizer == true,
                 isResource: person.resource == true,
                 responseStatus: person.responseStatus,
+                isGroup: CalendarAttendeeMapping.looksLikeGroup(
+                    email: person.email, displayName: person.displayName,
+                ),
             )
         }
+        var mappedPeople = (item.attendees ?? []).compactMap { mapped($0, isOrganizer: false) }
         if let organizer = item.organizer {
             let organizerEmail = organizer.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let alreadyListed = mapped.contains { existing in
+            let alreadyListed = mappedPeople.contains { existing in
                 if let organizerEmail, !organizerEmail.isEmpty,
                    existing.email?.lowercased() == organizerEmail {
                     return true
                 }
                 return existing.isOrganizer
             }
-            if !alreadyListed,
-               let extra = CalendarAttendeeMapping.google(
-                   email: organizer.email,
-                   displayName: organizer.displayName,
-                   isSelf: organizer.isSelf == true,
-                   isOrganizer: true,
-                   isResource: organizer.resource == true,
-                   responseStatus: organizer.responseStatus ?? "accepted",
-               ) {
-                mapped.insert(extra, at: 0)
+            if !alreadyListed, let extra = mapped(organizer, isOrganizer: true) {
+                mappedPeople.insert(extra, at: 0)
             }
         }
-        return mapped
+        return mappedPeople
     }
 
     private static func isoString(_ date: Date) -> String {
@@ -184,7 +202,9 @@ private struct EventItem: Decodable {
     let start: EventTime?
     let end: EventTime?
     let conferenceData: ConferenceData?
+    let status: String?
     let organizer: GooglePerson?
+    let creator: GooglePerson?
     let attendees: [GooglePerson]?
 
     var conferenceURI: String? {

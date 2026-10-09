@@ -440,12 +440,16 @@ struct SpeakerNamingView: View { // swiftlint:disable:this type_body_length
 
     @ViewBuilder
     private func participantChips(for label: String, query: String) -> some View {
-        let participants = Self.filterByQuery(names: data.participants, query: query)
+        let displayNames = CalendarAttendeePicker.preferredSpellings(
+            data.participants, among: knownSpeakerNames,
+        )
+        let participants = Self.filterByQuery(names: displayNames, query: query)
         if !participants.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                Text("From calendar")
+                Text("Participants")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(A11yID.speakerParticipantsHeading)
                 chipRow(names: participants, idPrefix: A11yID.participantNamePrefix) { rows.names[label] = $0 }
             }
         }
@@ -497,8 +501,8 @@ struct SpeakerNamingView: View { // swiftlint:disable:this type_body_length
     /// Known speakers minus participants (avoids duplicate chips when a known
     /// speaker is also a meeting participant).
     private var knownNamesNotInParticipants: [String] {
-        let participantSet = Set(data.participants)
-        return knownSpeakerNames.filter { !participantSet.contains($0) }
+        let participantKeys = Set(data.participants.map { $0.lowercased() })
+        return knownSpeakerNames.filter { !participantKeys.contains($0.lowercased()) }
     }
 
     private func chipRow(

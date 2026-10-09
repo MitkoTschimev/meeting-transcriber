@@ -69,11 +69,13 @@ enum CalendarAgenda {
     ) -> [CalendarAttendee] {
         guard !secondary.isEmpty else { return primary }
         guard !primary.isEmpty else { return secondary }
-        var seen: Set<String> = []
         var merged: [CalendarAttendee] = []
         for attendee in primary + secondary {
-            guard seen.insert(attendee.id).inserted else { continue }
-            merged.append(attendee)
+            if let index = merged.firstIndex(where: { $0.isSamePerson(as: attendee) }) {
+                merged[index] = merged[index].merging(attendee)
+            } else {
+                merged.append(attendee)
+            }
         }
         return merged
     }
