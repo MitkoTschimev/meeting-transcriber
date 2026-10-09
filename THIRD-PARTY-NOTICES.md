@@ -180,6 +180,32 @@ linked archive, where ggml accounts for most of them.
 - **License:** MIT. The full text ships as
   `Contents/Resources/licenses/ggml-LICENSE.txt`.
 
+## MarkdownUI
+
+GitHub Flavored Markdown renderer for the Meeting Notes Summary tab, statically
+linked into the app binary.
+
+- **Project:** <https://github.com/gonzalezreal/swift-markdown-ui>
+- **Version:** 2.4.1, pinned in `app/MeetingTranscriber/Package.resolved`
+- **Copyright:** Copyright (c) 2020 Guillermo Gonzalez
+- **License:** MIT. MIT requires the copyright notice and permission notice in
+  all copies, and a binary is a copy, so the text ships as
+  `Contents/Resources/licenses/MarkdownUI-LICENSE.txt`.
+
+MarkdownUI pulls in two further libraries that also land in the app binary:
+
+- **NetworkImage** (<https://github.com/gonzalezreal/NetworkImage>) 6.0.1, MIT,
+  © 2020 Guille Gonzalez. MarkdownUI uses it to load remote images. This app
+  disables that path (`NotesDisabledImageProvider`) so reading notes does not
+  fetch URLs, but the library is still linked. Shipped as
+  `Contents/Resources/licenses/NetworkImage-LICENSE.txt`.
+- **cmark-gfm** via [swift-cmark](https://github.com/swiftlang/swift-cmark) 0.9.0,
+  BSD-2-Clause (with MIT-licensed subsets documented in upstream `COPYING`),
+  © 2014 John MacFarlane and additional authors named in that file. BSD-2-Clause
+  requires binary redistributions to reproduce the copyright notice in the
+  accompanying materials, which is what
+  `Contents/Resources/licenses/cmark-LICENSE.txt` is.
+
 ## How these files get into the bundle
 
 `scripts/lib/bundle-licenses.sh` copies everything in `licenses/` into

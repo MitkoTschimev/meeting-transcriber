@@ -93,6 +93,8 @@ final class MeetingNotesViewTests: XCTestCase {
         )
         let body = try view.inspect()
         XCTAssertNoThrow(try body.find(text: "Ship the notes window"))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesMarkdownPreview))
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.meetingNotesDisplayMode))
     }
 
     func testGeneratingPlaceholderUsesPreferredStyleCaption() throws {
